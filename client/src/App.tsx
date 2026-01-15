@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import { io, Socket } from "socket.io-client";
 import { PiMicrophone } from "react-icons/pi";
 import { PiMicrophoneSlash } from "react-icons/pi";
 import { IoVideocamOutline } from "react-icons/io5";
 import { IoVideocamOffOutline } from "react-icons/io5";
 
 const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:5000";
+  import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
 
 function App() {
+  /* ---------------- States ---------------- */
+
   const socketRef = useRef<Socket | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
@@ -18,60 +20,45 @@ function App() {
   const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(
     null
   );
+  const [remoteVideStream] = useState<MediaStream | null>(null);
+  const [remoteAudioStream] = useState<MediaStream | null>(null);
   const [clientAudioStream, setClientAudioStream] =
     useState<MediaStream | null>(null);
 
-  /* ---------------- Socket Lifecycle ---------------- */
-  useEffect(() => {
-    const socket = io(SOCKET_URL, {
-      transports: ["websocket"],
-      withCredentials: true,
-    });
+  const [remoteSocketId, setRemoteSocketId] = useState<string | null>(null);
 
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      console.log("✅ Socket connected:", socket.id);
-      setIsConnected(true);
-    });
-
-    socket.on("disconnect", () => {
-      console.log("❌ Socket disconnected");
-      setIsConnected(false);
-    });
-
-    return () => {
-      socket.disconnect();
-      socketRef.current = null;
-    };
-  }, []);
-
-  /* ---------------- Room Actions ---------------- */
-  const joinRoom = useCallback(() => {
+  /* ---------------- Callbacks ---------------- */
+  const joinRoom = useCallback(async () => {
     const socket = socketRef.current;
-    if (!socket || !isConnected || roomId) return;
-
+    if (!socket || !isConnected) return;
     const newRoomId = crypto.randomUUID();
-    setRoomId(newRoomId);
+    if (!roomId) {
+      setRoomId(newRoomId);
+    }
     setStarted(true);
 
-    socket.emit("join-room", {
-      roomId: newRoomId,
+    socket.emit("room:join", {
+      roomId: roomId || newRoomId,
       user: userName,
     });
-
-    console.log("➡️ Joined room:", newRoomId);
   }, [isConnected, roomId, userName]);
+
+  const handleJoinRoom = useCallback(
+    (data: { roomId: string; user: string }) => {
+      const { roomId, user } = data;
+      console.log("⬅️ Successfully Joined room:", roomId, user);
+    },
+    []
+  );
 
   const leaveRoom = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !roomId) return;
 
-    socket.emit("leave-room", roomId);
+    socket.emit("room:leave", roomId);
 
     console.log("⬅️ Left room:", roomId);
 
-    setRoomId(null);
     setStarted(false);
   }, [roomId]);
 
@@ -81,8 +68,8 @@ function App() {
 
     const newRoomId = crypto.randomUUID();
 
-    socket.emit("leave-room", roomId);
-    socket.emit("join-room", {
+    socket.emit("room:leave", roomId);
+    socket.emit("room:join", {
       roomId: newRoomId,
       user: userName,
     });
@@ -91,6 +78,14 @@ function App() {
 
     console.log("🔁 Switched to room:", newRoomId);
   }, [isConnected, roomId, userName]);
+
+  const handleUserJoined = useCallback(
+    ({ user, roomId, id }: { user: string; roomId: string; id: string }) => {
+      console.log(`${user} joined room` + roomId);
+      setRemoteSocketId(id);
+    },
+    []
+  );
 
   // camera and audio handlers
   const toggleClientVideo = useCallback(() => {
@@ -128,6 +123,40 @@ function App() {
         });
     }
   }, [clientAudioStream]);
+
+  /* ---------------- use effects ---------------- */
+  useEffect(() => {
+    const socket = io(SOCKET_URL, {
+      transports: ["websocket"], // important
+    });
+
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      console.log("✅ Socket connected:", socket.id);
+      setIsConnected(true);
+    });
+
+    socket.on("disconnect", () => {
+      console.log("❌ Socket disconnected");
+      setIsConnected(false);
+    });
+
+    // 👇 THESE MUST BE OUTSIDE disconnect
+    socket.on("room:join", handleJoinRoom);
+    socket.on("user:joined", handleUserJoined);
+
+    socket.on("connect_error", (err) => {
+      console.error("🔥 Connect error:", err.message);
+    });
+
+    return () => {
+      socket.off("room:join", handleJoinRoom);
+      socket.off("user:joined", handleUserJoined);
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [handleJoinRoom, handleUserJoined]);
 
   return (
     <>
@@ -172,6 +201,8 @@ function App() {
             />
           </div>
           {/* 2 videos box */}
+
+          {/* Local Client video  */}
           <div className="flex flex-col md:flex-row justify-center items-center gap-4 md:gap-8 w-full">
             <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150">
               {clientVideStream ? (
@@ -191,20 +222,6 @@ function App() {
                   <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
                 </div>
               )}
-
-              {/* Video toggle button */}
-              {/* <div className="absolute top-4 right-4">
-                <button
-                  onClick={toggleClientVideo}
-                  className={`${clientVideStream ? "text-green-500" : "text-gray-500"}  p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer`}
-                >
-                  <RiVideoOnLine
-                    className={`text-2xl ${
-                      clientVideStream ? "text-green-400" : "text-gray-400"
-                    }`}
-                  />
-                </button>
-              </div> */}
 
               {/* Camera and microphone toggle buttons */}
               <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
@@ -246,43 +263,46 @@ function App() {
                 </button>
               </div>
             </div>
-            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-cyan-900/60 via-slate-800/80 to-blue-800/60 rounded-3xl shadow-2xl border border-blue-400/30 hover:border-cyan-400/70 transition-all duration-300 hover:shadow-cyan-400/30 backdrop-blur-md backdrop-saturate-150">
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
-                <button
-                  className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
-                >
-                  {clientVideStream ? (
-                    <IoVideocamOutline
-                      className={`text-2xl 
-                        text-green-400
-                      `}
+
+            {/* Remote client */}
+
+            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150">
+              {remoteSocketId ? (
+                <>
+                  {remoteVideStream ? (
+                    <video
+                      autoPlay
+                      playsInline
+                      className="rounded-3xl w-full h-full object-cover"
                     />
                   ) : (
-                    <IoVideocamOffOutline
-                      className={`text-2xl 
-                        text-red-400
-                      `}
-                    />
+                    <div className="flex flex-col justify-center items-center h-full text-center p-4">
+                      <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
+                      <p className="text-gray-400 text-lg md:text-xl">
+                        Remote client name
+                      </p>
+                    </div>
                   )}
-                </button>
-                <button
-                  className={`p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer`}
-                >
-                  {clientAudioStream ? (
-                    <PiMicrophone
-                      className={`text-2xl
-                         text-green-400
-                      `}
-                    />
-                  ) : (
-                    <PiMicrophoneSlash
-                      className={`text-2xl
-                         text-red-400
-                      `}
-                    />
-                  )}
-                </button>
-              </div>
+
+                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
+                    <button className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
+                      {remoteVideStream ? (
+                        <IoVideocamOutline className="text-2xl text-green-400" />
+                      ) : (
+                        <IoVideocamOffOutline className="text-2xl text-red-400" />
+                      )}
+                    </button>
+
+                    <button className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
+                      {remoteAudioStream ? (
+                        <PiMicrophone className="text-2xl text-green-400" />
+                      ) : (
+                        <PiMicrophoneSlash className="text-2xl text-red-400" />
+                      )}
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -321,23 +341,28 @@ function App() {
           </div>
         </div>
 
-       {/* Room ID input box - Centered on mobile, Right on desktop */}
-        <div className="roomInputBox absolute bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 flex flex-col items-center z-10 roomInputBox">
+        {/* Room ID input box - Centered on mobile, Right on desktop */}
+        <div className="roomInputBox absolute bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 flex flex-col items-center z-10 roomInputBoxa">
           <div>
             <label
               htmlFor="room-id"
-              className="text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md"
+              className={` ${
+                started ? "opacity-50" : "block"
+              } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
             >
               ── Enter Room ID (Optional) ──
             </label>
           </div>
           <input
+            disabled={started}
             id="room-id"
             type="text"
             value={roomId || ""}
             onChange={(e) => setRoomId(e.target.value)}
             placeholder="Room ID"
-            className="text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70"
+            className={` ${
+              started ? "cursor-auto bg-gray-700/50 border-none" : "cursor-auto"
+            } text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
             maxLength={36}
             autoComplete="off"
           />
