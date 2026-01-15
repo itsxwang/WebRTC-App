@@ -1,12 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --font-sans: sans, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+  --font-sans: sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
 @theme {
-  --default-font-family: 'Inter', var(--font-sans);
+  --default-font-family: "Inter", var(--font-sans);
 }
 
+@media (max-width: 450px) {
+  .roomInputBox {
+    margin-bottom: -10px;
+  }
+}

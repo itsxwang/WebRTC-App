@@ -5,10 +5,6 @@ import { PiMicrophoneSlash } from "react-icons/pi";
 import { IoVideocamOutline } from "react-icons/io5";
 import { IoVideocamOffOutline } from "react-icons/io5";
 
-
-
-
-
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:5000";
 
@@ -19,8 +15,11 @@ function App() {
   const [userName, setUserName] = useState("Anonymous");
   const [roomId, setRoomId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(null);
-  const [clientAudioStream, setClientAudioStream] = useState<MediaStream | null>(null);
+  const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(
+    null
+  );
+  const [clientAudioStream, setClientAudioStream] =
+    useState<MediaStream | null>(null);
 
   /* ---------------- Socket Lifecycle ---------------- */
   useEffect(() => {
@@ -93,24 +92,23 @@ function App() {
     console.log("🔁 Switched to room:", newRoomId);
   }, [isConnected, roomId, userName]);
 
-
   // camera and audio handlers
   const toggleClientVideo = useCallback(() => {
-        if (clientVideStream) {
-          // Turn off video
-          clientVideStream.getVideoTracks().forEach((track) => track.stop());
-          setClientVideStream(null);
-        } else {
-          // Turn on video
-          navigator.mediaDevices
-            .getUserMedia({ video: true, audio: false })
-            .then((stream) => {
-              setClientVideStream(stream);
-            })
-            .catch((error) => {
-              console.error("Error accessing media devices.", error);
-            });
-        }
+    if (clientVideStream) {
+      // Turn off video
+      clientVideStream.getVideoTracks().forEach((track) => track.stop());
+      setClientVideStream(null);
+    } else {
+      // Turn on video
+      navigator.mediaDevices
+        .getUserMedia({ video: true, audio: false })
+        .then((stream) => {
+          setClientVideStream(stream);
+        })
+        .catch((error) => {
+          console.error("Error accessing media devices.", error);
+        });
+    }
   }, [clientVideStream]);
 
   const toggleClientAudio = useCallback(() => {
@@ -165,7 +163,9 @@ function App() {
               onChange={(e) => setUserName(e.target.value)}
               placeholder="Enter your name..."
               className={`${
-                started ? "cursor-auto bg-gray-700/50 border-none" : "cursor-auto"
+                started
+                  ? "cursor-auto bg-gray-700/50 border-none"
+                  : "cursor-auto"
               } text-center w-full px-5 py-3 rounded-2xl border-2 border-cyan-400/60  backdrop-blur-md text-white text-lg font-mono shadow-lg focus:outline-none focus:border-blue-400  transition-all duration-200 placeholder:text-cyan-200/70`}
               maxLength={32}
               autoComplete="off"
@@ -174,7 +174,6 @@ function App() {
           {/* 2 videos box */}
           <div className="flex flex-col md:flex-row justify-center items-center gap-4 md:gap-8 w-full">
             <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150">
-              
               {clientVideStream ? (
                 <video
                   autoPlay
@@ -213,8 +212,7 @@ function App() {
                   onClick={toggleClientVideo}
                   className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
                 >
-                  {clientVideStream ? 
-                   (
+                  {clientVideStream ? (
                     <IoVideocamOutline
                       className={`text-2xl 
                         text-green-400
@@ -225,11 +223,8 @@ function App() {
                       className={`text-2xl 
                         text-red-400
                       `}
-                  />
-                  ) 
-                
-                }
-
+                    />
+                  )}
                 </button>
                 <button
                   onClick={toggleClientAudio}
@@ -239,21 +234,56 @@ function App() {
                     <PiMicrophone
                       className={`text-2xl
                          text-green-400
-                      `} 
+                      `}
                     />
                   ) : (
                     <PiMicrophoneSlash
                       className={`text-2xl
                          text-red-400
                       `}
-
                     />
                   )}
-
                 </button>
               </div>
             </div>
-            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-cyan-900/60 via-slate-800/80 to-blue-800/60 rounded-3xl shadow-2xl border border-blue-400/30 hover:border-cyan-400/70 transition-all duration-300 hover:shadow-cyan-400/30 backdrop-blur-md backdrop-saturate-150"></div>
+            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-cyan-900/60 via-slate-800/80 to-blue-800/60 rounded-3xl shadow-2xl border border-blue-400/30 hover:border-cyan-400/70 transition-all duration-300 hover:shadow-cyan-400/30 backdrop-blur-md backdrop-saturate-150">
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
+                <button
+                  className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
+                >
+                  {clientVideStream ? (
+                    <IoVideocamOutline
+                      className={`text-2xl 
+                        text-green-400
+                      `}
+                    />
+                  ) : (
+                    <IoVideocamOffOutline
+                      className={`text-2xl 
+                        text-red-400
+                      `}
+                    />
+                  )}
+                </button>
+                <button
+                  className={`p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer`}
+                >
+                  {clientAudioStream ? (
+                    <PiMicrophone
+                      className={`text-2xl
+                         text-green-400
+                      `}
+                    />
+                  ) : (
+                    <PiMicrophoneSlash
+                      className={`text-2xl
+                         text-red-400
+                      `}
+                    />
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Start/Stop and Next button */}
@@ -273,7 +303,7 @@ function App() {
                   : "opacity-100 cursor-pointer"
               } px-8 md:px-16 py-3 md:py-4 bg-linear-to-r from-blue-500 via-cyan-400 to-blue-400 rounded-full font-bold text-base md:text-lg shadow-xl shadow-cyan-400/30 hover:shadow-blue-400/50 hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-cyan-300/40 hover:border-blue-400/60 focus:outline-none focus:ring-2 focus:ring-cyan-400/40`}
             >
-              {!isConnected  ? "Connecting..." : started ? "Stop" : "Start"}
+              {!isConnected ? "Connecting..." : started ? "Stop" : "Start"}
             </button>
             {started && (
               <button
@@ -289,6 +319,28 @@ function App() {
               </button>
             )}
           </div>
+        </div>
+
+       {/* Room ID input box - Centered on mobile, Right on desktop */}
+        <div className="roomInputBox absolute bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 flex flex-col items-center z-10 roomInputBox">
+          <div>
+            <label
+              htmlFor="room-id"
+              className="text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md"
+            >
+              ── Enter Room ID (Optional) ──
+            </label>
+          </div>
+          <input
+            id="room-id"
+            type="text"
+            value={roomId || ""}
+            onChange={(e) => setRoomId(e.target.value)}
+            placeholder="Room ID"
+            className="text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70"
+            maxLength={36}
+            autoComplete="off"
+          />
         </div>
       </div>
     </>
