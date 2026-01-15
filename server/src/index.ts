@@ -12,10 +12,18 @@ const io = new Server(process.env.PORT, {
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  socket.on("join-room", ({ roomId, user }: { roomId: string; user: string }) => {
-    socket.join(roomId);
-    console.log(`${user} joined room: ${roomId}`);
-    socket.to(roomId).emit("user-joined", { user, socketId: socket.id });
+  socket.on(
+    "join-room",
+    ({ roomId, user }: { roomId: string; user: string }) => {
+      socket.join(roomId);
+      console.log(`${user} joined room: ${roomId}`);
+      socket.to(roomId).emit("user-joined", { user, socketId: socket.id });
+    }
+  );
+
+  socket.on("leave-room", (roomId) => {
+    socket.leave(roomId);
+    console.log(`${socket.id} left ${roomId}`);
   });
 
   socket.on("disconnect", () => {
@@ -23,5 +31,6 @@ io.on("connection", (socket: Socket) => {
   });
 });
 
-console.log(`Socket.IO server running on port http://localhost:${process.env.PORT}`);
-
+console.log(
+  `Socket.IO server running on port http://localhost:${process.env.PORT}`
+);
