@@ -30,39 +30,64 @@ function App() {
 
   const [remoteSocketId, setRemoteSocketId] = useState<string | null>(null);
   const [remoteUserName, setRemoteUserName] = useState<string | null>(null);
-  
+
   /* ---------------- Callbacks ---------------- */
 
   // callbacks for usually remote cleint
 
-  const handleCallUser = useCallback(async (remoteUserId: string) => {
-    const offer = await peer.getOffer();
+  // Helper: Attaches your existing video/audio state to the peer connection
+  const attachTracks = useCallback(() => {
+    // Add Video Track if it exists
+    if (clientVideStream) {
+      clientVideStream.getTracks().forEach((track) => {
+        // check if track is already added to avoid errors
+        const senders = peer.peer.getSenders();
+        if (!senders.find((s) => s.track?.id === track.id)) {
+          peer.peer.addTrack(track, clientVideStream);
+        }
+      });
+    }
+    // Add Audio Track if it exists
+    if (clientAudioStream) {
+      clientAudioStream.getTracks().forEach((track) => {
+        const senders = peer.peer.getSenders();
+        if (!senders.find((s) => s.track?.id === track.id)) {
+          peer.peer.addTrack(track, clientAudioStream);
+        }
+      });
+    }
+  }, [clientVideStream, clientAudioStream]);
 
-    socketRef.current?.emit("user:call", {
-      to: remoteUserId,
-      offer,
+  const handleCallUser = useCallback(
+    async (remoteUserId: string) => {
+      // 1. Attach media BEFORE creating offer
+      attachTracks();
+
+      const offer = await peer.getOffer();
+      socketRef.current?.emit("user:call", {
+        to: remoteUserId,
+        offer,
+      });
+    },
+    [attachTracks]
+  ); 
+
+const handleIncommingCall = useCallback(
+  async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
+    console.log("📞 Incoming call from", from);
+    setRemoteSocketId(from); // Set the sender as the remote user
+
+    // 1. Attach media BEFORE creating answer
+    attachTracks();
+
+    const ans = await peer.getAnswer(offer);
+    socketRef.current?.emit("call:accepted", {
+      to: from,
+      ans,
     });
-  }, []);
-
-  // const handleIncommingCall = useCallback(
-  //   async ({
-  //     from,
-  //     offer,
-  //   }: {
-  //     from: string;
-  //     offer: RTCSessionDescriptionInit;
-  //   }) => {
-  //     console.log("📞 Incoming call");
-
-  //     const ans = await peer.getAnswer(offer);
-
-  //     socketRef.current?.emit("call:accepted", {
-  //       to: from,
-  //       ans,
-  //     });
-  //   },
-  //   []
-  // );
+  },
+  [attachTracks]
+);
 
   // callbacks for usually local cleint
 
@@ -77,20 +102,24 @@ function App() {
 
     socket.emit("room:join", {
       roomId: roomId || newRoomId,
-      user: userName
+      user: userName,
     });
   }, [isConnected, roomId, userName]);
 
   const handleJoinRoom = useCallback(
-    (data: { roomId: string; user: string, existingUser: string, existingUserName: string }) => {
+    (data: {
+      roomId: string;
+      user: string;
+      existingUser: string;
+      existingUserName: string;
+    }) => {
       const { roomId, user, existingUser, existingUserName } = data;
       console.log("⬅️ Successfully Joined room:", roomId, user);
-      console.log(existingUser)
+      console.log(existingUser);
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
       }
-      
     },
     []
   );
@@ -104,6 +133,8 @@ function App() {
     console.log("⬅️ Left room:", roomId);
 
     setStarted(false);
+    setRemoteSocketId(null);
+    setRemoteUserName(null);
   }, [roomId]);
 
   const joinNextRoom = useCallback(() => {
@@ -123,24 +154,25 @@ function App() {
     console.log("🔁 Switched to room:", newRoomId);
   }, [isConnected, roomId, userName]);
 
-   const handleUserLeft = useCallback(() => {
+  const handleUserLeft = useCallback(() => {
     console.log("👋 User left room");
-      setRemoteSocketId(null);
-    },[]);
-
+    setRemoteSocketId(null);
+  }, []);
 
   const handleUserJoined = useCallback(
-    ({ user, id }: { user: string; id: string }) => {
-      setRemoteUserName(user);      
-      setRemoteSocketId(id);
+  ({ user, id }: { user: string; id: string }) => {
+    console.log("👋 User joined:", user);
+    setRemoteUserName(user);
+    setRemoteSocketId(id);
+    
+    // Listen for their leave
+    socketRef.current?.on("user:leave", handleUserLeft);
 
-      socketRef.current?.on("user:leave", handleUserLeft);
-
-      // 📞 START CALL
-      handleCallUser(id);
-    },
-    [handleCallUser, handleUserLeft]
-  );
+    // 🔥 CRITICAL FIX: Initiate the call immediately when they join
+    handleCallUser(id); 
+  },
+  [handleUserLeft, handleCallUser]
+);
 
   // camera and audio handlers
   const toggleClientVideo = useCallback(async () => {
@@ -157,6 +189,7 @@ function App() {
       });
 
       setClientVideStream(stream);
+      if (remoteSocketId) handleCallUser(remoteSocketId);
 
       // 🔥 SEND VIDEO TO PEER
       if (remoteSocketId) {
@@ -167,7 +200,7 @@ function App() {
     } catch (err) {
       console.error("Video error:", err);
     }
-  }, [clientVideStream, remoteSocketId]);
+  }, [clientVideStream, remoteSocketId, handleCallUser]);
 
   const toggleClientAudio = useCallback(async () => {
     if (clientAudioStream) {
@@ -195,7 +228,15 @@ function App() {
     }
   }, [clientAudioStream, remoteSocketId]);
 
- 
+
+
+  const handleCallAccepted = useCallback(
+    async ({ ans }: { from: string; ans: RTCSessionDescription }) => {
+      await peer.setLocalDescription(ans);
+      console.log("✅ Call accepted");
+    },
+    []
+  );
 
   /* ---------------- use effects ---------------- */
 
@@ -232,17 +273,13 @@ function App() {
       setIsConnected(false);
     });
 
-
     // 👇 THESE MUST BE OUTSIDE disconnect
     socket.on("room:join", handleJoinRoom);
     socket.on("user:joined", handleUserJoined);
-    
-    socket.on("call:accepted", async ({ ans }) => {
-      console.log("✅ Call accepted");
-      await peer.setLocalDescription(ans);
-    });
 
-    // socket.on("incomming:call", handleIncommingCall);
+    socket.on("call:accepted", handleCallAccepted);
+
+    socket.on("incomming:call", handleIncommingCall);
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
@@ -254,7 +291,12 @@ function App() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [handleJoinRoom, handleUserJoined]);
+  }, [
+    handleJoinRoom,
+    handleUserJoined,
+    handleIncommingCall,
+    handleCallAccepted,
+  ]);
 
   useEffect(() => {
     peer.peer.onicecandidate = (event) => {
@@ -280,7 +322,7 @@ function App() {
         <div className="flex justify-center w-full pt-8 md:pt-16 pb-4 md:pb-8 px-4">
           <div className="text-center max-w-full">
             <h1 className="text-2xl sm:text-4xl md:text-6xl lg:text-7xl font-mono font-bold bg-linear-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent mb-3 drop-shadow-[0_2px_16px_rgba(0,255,255,0.25)]">
-              INTERACT IN REAL TIME
+              STRANGERS 360
               {/* underline */}
               <div className="relative flex justify-center mt-2 mb-4">
                 <span className="block w-40 sm:w-56 md:w-72 h-2 rounded-full bg-linear-to-r from-blue-400 via-cyan-300 to-blue-500 shadow-xl shadow-cyan-400/40 blur-[1px] opacity-90"></span>
@@ -288,7 +330,7 @@ function App() {
               </div>
             </h1>
             <p className="text-gray-400 text-sm md:text-lg">
-              Connect, Share, Collaborate
+              Find, Share - Enjoy
             </p>
           </div>
         </div>
@@ -323,7 +365,7 @@ function App() {
                   muted
                   playsInline
                   ref={(video) => {
-                    if (video) {
+                    if (video && clientVideStream) {
                       video.srcObject = clientVideStream;
                     }
                   }}
@@ -386,12 +428,17 @@ function App() {
                       autoPlay
                       playsInline
                       className="rounded-3xl w-full h-full object-cover"
+                      ref={(video) => {
+                        if (video) {
+                          video.srcObject = remoteVideStream;
+                        }
+                      }}
                     />
                   ) : (
                     <div className="flex flex-col justify-center items-center h-full text-center p-4">
                       <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
                       <p className="text-gray-400 text-lg md:text-xl">
-                        {remoteUserName ? remoteUserName : "" } 
+                        {remoteUserName ? remoteUserName : ""}
                       </p>
                     </div>
                   )}
