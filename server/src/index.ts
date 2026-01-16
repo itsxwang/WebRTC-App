@@ -17,38 +17,69 @@ const io = new Server(server, {
   },
 });
 
-const presentUsers = new Map<string, string>();
+const socketToUser = new Map<string, string>();
 
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
+  socketToUser.set(socket.id, "Anonymous");
 
   socket.on(
     "room:join",
     ({ roomId, user }: { roomId: string; user: string }) => {
+      let existingUser: string | undefined = Array.from(
+        io.sockets.adapter.rooms.get(roomId) || []
+      ).pop();
+      let existingUserName: string | undefined = socketToUser.get(
+        existingUser || ""
+      );
+
+      socketToUser.set(socket.id, user);
+
+
+
       socket.join(roomId);
       console.log(`${user} joined room: ${roomId}`);
+  
 
       // this to tell new user that he joined successfully - we can also do io.to(socket.id).emit = does same thing
-      socket.emit("room:join", { roomId, user });
+      socket.emit("room:join", {
+        roomId,
+        user,
+        existingUser,
+        existingUserName,
+      });
       // this one to tell existing users that new user joined
-      io.to(roomId).emit("user:joined", { user, id: socket.id, roomId });
+      socket.to(roomId).emit("user:joined", { user, id: socket.id, roomId });
     }
   );
 
   socket.on("room:leave", (roomId) => {
     socket.leave(roomId);
+
+    io.to(roomId).emit("user:leave", {});
     console.log(`${socket.id} left ${roomId}`);
   });
 
-  socket.on("disconnect", () => {
-    console.log(`User disconnected: ${socket.id}`);
+  socket.on(
+    "user:call",
+    ({ to, offer }: { to: string; offer: RTCSessionDescription }) => {
+      io.to(to).emit("incomming:call", { from: socket.id, offer });
+    }
+  );
+  socket.on(
+    "call:accepted",
+    ({ to, ans }: { to: string; ans: RTCSessionDescription }) => {
+      io.to(to).emit("call:accepted", { ans });
+    }
+  );
+
+  socket.on("ice:candidate", ({ to, candidate }) => {
+    io.to(to).emit("ice:candidate", { candidate });
   });
 
-  // ------------ logic of some user joining room of someone who created it  --------------------------------
-
-  // this message will go in room if second user joined the room
-  socket.on("user:call", ({ to, offer }) => {
-    io.to(to).emit("incomming:call", { from: socket.id, offer });
+  // disconnect
+  socket.on("disconnect", () => {
+    console.log(`User disconnected: ${socket.id}`);
   });
 });
 

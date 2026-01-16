@@ -4,6 +4,7 @@ import { PiMicrophone } from "react-icons/pi";
 import { PiMicrophoneSlash } from "react-icons/pi";
 import { IoVideocamOutline } from "react-icons/io5";
 import { IoVideocamOffOutline } from "react-icons/io5";
+import peer from "./service/peer";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
@@ -20,14 +21,51 @@ function App() {
   const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(
     null
   );
-  const [remoteVideStream] = useState<MediaStream | null>(null);
+  const [remoteVideStream, setRemoteVideStream] = useState<MediaStream | null>(
+    null
+  );
   const [remoteAudioStream] = useState<MediaStream | null>(null);
   const [clientAudioStream, setClientAudioStream] =
     useState<MediaStream | null>(null);
 
   const [remoteSocketId, setRemoteSocketId] = useState<string | null>(null);
-
+  const [remoteUserName, setRemoteUserName] = useState<string | null>(null);
+  
   /* ---------------- Callbacks ---------------- */
+
+  // callbacks for usually remote cleint
+
+  const handleCallUser = useCallback(async (remoteUserId: string) => {
+    const offer = await peer.getOffer();
+
+    socketRef.current?.emit("user:call", {
+      to: remoteUserId,
+      offer,
+    });
+  }, []);
+
+  // const handleIncommingCall = useCallback(
+  //   async ({
+  //     from,
+  //     offer,
+  //   }: {
+  //     from: string;
+  //     offer: RTCSessionDescriptionInit;
+  //   }) => {
+  //     console.log("📞 Incoming call");
+
+  //     const ans = await peer.getAnswer(offer);
+
+  //     socketRef.current?.emit("call:accepted", {
+  //       to: from,
+  //       ans,
+  //     });
+  //   },
+  //   []
+  // );
+
+  // callbacks for usually local cleint
+
   const joinRoom = useCallback(async () => {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
@@ -39,14 +77,20 @@ function App() {
 
     socket.emit("room:join", {
       roomId: roomId || newRoomId,
-      user: userName,
+      user: userName
     });
   }, [isConnected, roomId, userName]);
 
   const handleJoinRoom = useCallback(
-    (data: { roomId: string; user: string }) => {
-      const { roomId, user } = data;
+    (data: { roomId: string; user: string, existingUser: string, existingUserName: string }) => {
+      const { roomId, user, existingUser, existingUserName } = data;
       console.log("⬅️ Successfully Joined room:", roomId, user);
+      console.log(existingUser)
+      if (existingUser) {
+        setRemoteSocketId(existingUser);
+        setRemoteUserName(existingUserName);
+      }
+      
     },
     []
   );
@@ -79,58 +123,104 @@ function App() {
     console.log("🔁 Switched to room:", newRoomId);
   }, [isConnected, roomId, userName]);
 
+   const handleUserLeft = useCallback(() => {
+    console.log("👋 User left room");
+      setRemoteSocketId(null);
+    },[]);
+
+
   const handleUserJoined = useCallback(
-    ({ user, roomId, id }: { user: string; roomId: string; id: string }) => {
-      console.log(`${user} joined room` + roomId);
+    ({ user, id }: { user: string; id: string }) => {
+      setRemoteUserName(user);      
       setRemoteSocketId(id);
+
+      socketRef.current?.on("user:leave", handleUserLeft);
+
+      // 📞 START CALL
+      handleCallUser(id);
     },
-    []
+    [handleCallUser, handleUserLeft]
   );
 
   // camera and audio handlers
-  const toggleClientVideo = useCallback(() => {
+  const toggleClientVideo = useCallback(async () => {
     if (clientVideStream) {
-      // Turn off video
-      clientVideStream.getVideoTracks().forEach((track) => track.stop());
+      clientVideStream.getTracks().forEach((track) => track.stop());
       setClientVideStream(null);
-    } else {
-      // Turn on video
-      navigator.mediaDevices
-        .getUserMedia({ video: true, audio: false })
-        .then((stream) => {
-          setClientVideStream(stream);
-        })
-        .catch((error) => {
-          console.error("Error accessing media devices.", error);
-        });
+      return;
     }
-  }, [clientVideStream]);
 
-  const toggleClientAudio = useCallback(() => {
-    if (clientAudioStream) {
-      // Turn off audio
-      clientAudioStream.getAudioTracks().forEach((track) => track.stop());
-      setClientAudioStream(null);
-    } else {
-      // Turn on audio
-      navigator.mediaDevices
-        .getUserMedia({ audio: true, video: false })
-        .then((stream) => {
-          setClientAudioStream(stream);
-        })
-        .catch((error) => {
-          console.error("Error accessing audio devices.", error);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+
+      setClientVideStream(stream);
+
+      // 🔥 SEND VIDEO TO PEER
+      if (remoteSocketId) {
+        stream.getTracks().forEach((track) => {
+          peer.peer.addTrack(track, stream);
         });
+      }
+    } catch (err) {
+      console.error("Video error:", err);
     }
-  }, [clientAudioStream]);
+  }, [clientVideStream, remoteSocketId]);
+
+  const toggleClientAudio = useCallback(async () => {
+    if (clientAudioStream) {
+      clientAudioStream.getTracks().forEach((track) => track.stop());
+      setClientAudioStream(null);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
+
+      setClientAudioStream(stream);
+
+      // 🔥 SEND AUDIO TO PEER
+      if (remoteSocketId) {
+        stream.getTracks().forEach((track) => {
+          peer.peer.addTrack(track, stream);
+        });
+      }
+    } catch (err) {
+      console.error("Audio error:", err);
+    }
+  }, [clientAudioStream, remoteSocketId]);
+
+ 
 
   /* ---------------- use effects ---------------- */
+
   useEffect(() => {
-    const socket = io(SOCKET_URL, {
-      transports: ["websocket"], // important
-    });
+    peer.peer.ontrack = (event) => {
+      console.log("🎥 Remote track received");
+      setRemoteVideStream(event.streams[0]);
+    };
+    return () => {
+      peer.peer.ontrack = null;
+    };
+  }, []);
+  useEffect(() => {
+    let socket = socketRef.current;
+    if (!socket) {
+      socket = io(SOCKET_URL, {
+        transports: ["websocket"], // important
+      });
+    }
 
     socketRef.current = socket;
+
+    socket.on("ice:candidate", ({ candidate }) => {
+      peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
+    });
 
     socket.on("connect", () => {
       console.log("✅ Socket connected:", socket.id);
@@ -142,9 +232,17 @@ function App() {
       setIsConnected(false);
     });
 
+
     // 👇 THESE MUST BE OUTSIDE disconnect
     socket.on("room:join", handleJoinRoom);
     socket.on("user:joined", handleUserJoined);
+    
+    socket.on("call:accepted", async ({ ans }) => {
+      console.log("✅ Call accepted");
+      await peer.setLocalDescription(ans);
+    });
+
+    // socket.on("incomming:call", handleIncommingCall);
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
@@ -157,6 +255,20 @@ function App() {
       socketRef.current = null;
     };
   }, [handleJoinRoom, handleUserJoined]);
+
+  useEffect(() => {
+    peer.peer.onicecandidate = (event) => {
+      if (event.candidate && remoteSocketId) {
+        socketRef.current?.emit("ice:candidate", {
+          to: remoteSocketId,
+          candidate: event.candidate,
+        });
+      }
+    };
+    return () => {
+      peer.peer.onicecandidate = null;
+    };
+  }, [remoteSocketId]);
 
   return (
     <>
@@ -279,7 +391,7 @@ function App() {
                     <div className="flex flex-col justify-center items-center h-full text-center p-4">
                       <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
                       <p className="text-gray-400 text-lg md:text-xl">
-                        Remote client name
+                        {remoteUserName ? remoteUserName : "" } 
                       </p>
                     </div>
                   )}
