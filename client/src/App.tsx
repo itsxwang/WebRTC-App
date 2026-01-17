@@ -70,24 +70,24 @@ function App() {
       });
     },
     [attachTracks]
-  );
+  ); 
 
-  const handleIncommingCall = useCallback(
-    async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
-      console.log("📞 Incoming call from", from);
-      setRemoteSocketId(from); // Set the sender as the remote user
+const handleIncommingCall = useCallback(
+  async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
+    console.log("📞 Incoming call from", from);
+    setRemoteSocketId(from); // Set the sender as the remote user
 
-      // 1. Attach media BEFORE creating answer
-      attachTracks();
+    // 1. Attach media BEFORE creating answer
+    attachTracks();
 
-      const ans = await peer.getAnswer(offer);
-      socketRef.current?.emit("call:accepted", {
-        to: from,
-        ans,
-      });
-    },
-    [attachTracks]
-  );
+    const ans = await peer.getAnswer(offer);
+    socketRef.current?.emit("call:accepted", {
+      to: from,
+      ans,
+    });
+  },
+  [attachTracks]
+);
 
   // callbacks for usually local cleint
 
@@ -107,16 +107,21 @@ function App() {
   }, [isConnected, roomId, userName]);
 
   const handleJoinRoom = useCallback(
-    (data: { existingUser: string; existingUserName: string }) => {
-      const { existingUser, existingUserName } = data;
+    (data: {
+      roomId: string;
+      user: string;
+      existingUser: string;
+      existingUserName: string;
+    }) => {
+      const { roomId, user, existingUser, existingUserName } = data;
+      console.log("⬅️ Successfully Joined room:", roomId, user);
+      console.log(existingUser);
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
-        // Only the NEW person initiates the call to the existing person
-        handleCallUser(existingUser);
       }
     },
-    [handleCallUser]
+    []
   );
 
   const leaveRoom = useCallback(() => {
@@ -155,18 +160,19 @@ function App() {
   }, []);
 
   const handleUserJoined = useCallback(
-    ({ user, id }: { user: string; id: string }) => {
-      console.log("👋 User joined:", user);
-      setRemoteUserName(user);
-      setRemoteSocketId(id);
+  ({ user, id }: { user: string; id: string }) => {
+    console.log("👋 User joined:", user);
+    setRemoteUserName(user);
+    setRemoteSocketId(id);
+    
+    // Listen for their leave
+    socketRef.current?.on("user:leave", handleUserLeft);
 
-      // Listen for their leave
-      socketRef.current?.on("user:leave", handleUserLeft);
-
-      // 🔥 CRITICAL FIX: Initiate the call immediately when they join
-    },
-    [handleUserLeft]
-  );
+    // 🔥 CRITICAL FIX: Initiate the call immediately when they join
+    handleCallUser(id); 
+  },
+  [handleUserLeft, handleCallUser]
+);
 
   // camera and audio handlers
   const toggleClientVideo = useCallback(async () => {
@@ -183,6 +189,7 @@ function App() {
       });
 
       setClientVideStream(stream);
+      if (remoteSocketId) handleCallUser(remoteSocketId);
 
       // 🔥 SEND VIDEO TO PEER
       if (remoteSocketId) {
@@ -193,7 +200,7 @@ function App() {
     } catch (err) {
       console.error("Video error:", err);
     }
-  }, [clientVideStream, remoteSocketId]);
+  }, [clientVideStream, remoteSocketId, handleCallUser]);
 
   const toggleClientAudio = useCallback(async () => {
     if (clientAudioStream) {
@@ -221,31 +228,17 @@ function App() {
     }
   }, [clientAudioStream, remoteSocketId]);
 
+
+
   const handleCallAccepted = useCallback(
-    async ({ ans }: { ans: RTCSessionDescription }) => {
-      // Only set if we are actually waiting for an answer
-      if (peer.peer.signalingState === "have-local-offer") {
-        await peer.setLocalDescription(ans);
-        console.log("✅ Call accepted and remote description set");
-      }
+    async ({ ans }: { from: string; ans: RTCSessionDescription }) => {
+      await peer.setLocalDescription(ans);
+      console.log("✅ Call accepted");
     },
     []
   );
 
   /* ---------------- use effects ---------------- */
-
-  useEffect(() => {
-    const handleNegotiation = async () => {
-      if (!remoteSocketId) return;
-      const offer = await peer.getOffer();
-      socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
-    };
-
-    peer.peer.onnegotiationneeded = handleNegotiation;
-    return () => {
-      peer.peer.onnegotiationneeded = null;
-    };
-  }, [remoteSocketId]);
 
   useEffect(() => {
     peer.peer.ontrack = (event) => {
@@ -508,15 +501,17 @@ function App() {
         </div>
 
         {/* Room ID input box - Centered on mobile, Right on desktop */}
-        <div className="room-id-container">
-          <label
-            htmlFor="room-id"
-            className={`${
-              started ? "opacity-50" : "block"
-            } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
-          >
-            ── Enter Room ID (Optional) ──
-          </label>
+        <div className="roomInputBox absolute bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 flex flex-col items-center z-10 roomInputBoxa">
+          <div>
+            <label
+              htmlFor="room-id"
+              className={` ${
+                started ? "opacity-50" : "block"
+              } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
+            >
+              ── Enter Room ID (Optional) ──
+            </label>
+          </div>
           <input
             disabled={started}
             id="room-id"
@@ -524,8 +519,8 @@ function App() {
             value={roomId || ""}
             onChange={(e) => setRoomId(e.target.value)}
             placeholder="Room ID"
-            className={`${
-              started ? "bg-gray-700/50 border-none" : ""
+            className={` ${
+              started ? "cursor-auto bg-gray-700/50 border-none" : "cursor-auto"
             } text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
             maxLength={36}
             autoComplete="off"

@@ -22,13 +22,9 @@ class PeerService {
     }
   }
 
-  async setLocalDescription(ans: RTCSessionDescriptionInit) {
-    // Use Init type
+  async setLocalDescription(ans: RTCSessionDescription) {
     if (this.peer) {
-      // FIX: This must be setRemoteDescription because 'ans' comes from the OTHER person
-      if (this.peer.signalingState !== "stable") {
-        await this.peer.setRemoteDescription(new RTCSessionDescription(ans));
-      }
+      await this.peer.setRemoteDescription(new RTCSessionDescription(ans));
     }
   }
 
