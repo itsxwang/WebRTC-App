@@ -19,11 +19,9 @@ function App() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(
-    null
+    null,
   );
-  const [remoteVideStream, setRemoteVideStream] = useState<MediaStream | null>(
-    null
-  );
+  const [remoteVideStream] = useState<MediaStream | null>(null);
   const [remoteAudioStream] = useState<MediaStream | null>(null);
   const [clientAudioStream, setClientAudioStream] =
     useState<MediaStream | null>(null);
@@ -36,58 +34,58 @@ function App() {
   // callbacks for usually remote cleint
 
   // Helper: Attaches your existing video/audio state to the peer connection
-  const attachTracks = useCallback(() => {
-    // Add Video Track if it exists
-    if (clientVideStream) {
-      clientVideStream.getTracks().forEach((track) => {
-        // check if track is already added to avoid errors
-        const senders = peer.peer.getSenders();
-        if (!senders.find((s) => s.track?.id === track.id)) {
-          peer.peer.addTrack(track, clientVideStream);
-        }
-      });
-    }
-    // Add Audio Track if it exists
-    if (clientAudioStream) {
-      clientAudioStream.getTracks().forEach((track) => {
-        const senders = peer.peer.getSenders();
-        if (!senders.find((s) => s.track?.id === track.id)) {
-          peer.peer.addTrack(track, clientAudioStream);
-        }
-      });
-    }
-  }, [clientVideStream, clientAudioStream]);
+  // const attachTracks = useCallback(() => {
+  //   // Add Video Track if it exists
+  //   if (clientVideStream) {
+  //     clientVideStream.getTracks().forEach((track) => {
+  //       // check if track is already added to avoid errors
+  //       const senders = peer.peer.getSenders();
+  //       if (!senders.find((s) => s.track?.id === track.id)) {
+  //         peer.peer.addTrack(track, clientVideStream);
+  //       }
+  //     });
+  //   }
+  //   // Add Audio Track if it exists
+  //   if (clientAudioStream) {
+  //     clientAudioStream.getTracks().forEach((track) => {
+  //       const senders = peer.peer.getSenders();
+  //       if (!senders.find((s) => s.track?.id === track.id)) {
+  //         peer.peer.addTrack(track, clientAudioStream);
+  //       }
+  //     });
+  //   }
+  // }, [clientVideStream, clientAudioStream]);
 
-  const handleCallUser = useCallback(
-    async (remoteUserId: string) => {
-      // 1. Attach media BEFORE creating offer
-      attachTracks();
+  // const handleCallUser = useCallback(
+  //   async (remoteUserId: string) => {
+  //     // 1. Attach media BEFORE creating offer
+  //     // attachTracks();
 
-      const offer = await peer.getOffer();
-      socketRef.current?.emit("user:call", {
-        to: remoteUserId,
-        offer,
-      });
-    },
-    [attachTracks]
-  ); 
+  //     const offer = await peer.getOffer();
+  //     socketRef.current?.emit("user:call", {
+  //       to: remoteUserId,
+  //       offer,
+  //     });
+  //   },
+  //   []
+  // );
 
-const handleIncommingCall = useCallback(
-  async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
-    console.log("📞 Incoming call from", from);
-    setRemoteSocketId(from); // Set the sender as the remote user
+  // const handleIncommingCall = useCallback(
+  //   async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
+  //     console.log("📞 Incoming call from", from);
+  //     setRemoteSocketId(from); // Set the sender as the remote user
 
-    // 1. Attach media BEFORE creating answer
-    attachTracks();
+  //     // 1. Attach media BEFORE creating answer
+  //     attachTracks();
 
-    const ans = await peer.getAnswer(offer);
-    socketRef.current?.emit("call:accepted", {
-      to: from,
-      ans,
-    });
-  },
-  [attachTracks]
-);
+  //     const ans = await peer.getAnswer(offer);
+  //     socketRef.current?.emit("call:accepted", {
+  //       to: from,
+  //       ans,
+  //     });
+  //   },
+  //   [attachTracks]
+  // );
 
   // callbacks for usually local cleint
 
@@ -121,7 +119,7 @@ const handleIncommingCall = useCallback(
         setRemoteUserName(existingUserName);
       }
     },
-    []
+    [],
   );
 
   const leaveRoom = useCallback(() => {
@@ -151,28 +149,33 @@ const handleIncommingCall = useCallback(
 
     setRoomId(newRoomId);
 
+    // Reset remote state
+    setRemoteSocketId(null);
+    setRemoteUserName(null);
+
     console.log("🔁 Switched to room:", newRoomId);
   }, [isConnected, roomId, userName]);
 
   const handleUserLeft = useCallback(() => {
     console.log("👋 User left room");
     setRemoteSocketId(null);
+    setRemoteUserName(null);
   }, []);
 
   const handleUserJoined = useCallback(
-  ({ user, id }: { user: string; id: string }) => {
-    console.log("👋 User joined:", user);
-    setRemoteUserName(user);
-    setRemoteSocketId(id);
-    
-    // Listen for their leave
-    socketRef.current?.on("user:leave", handleUserLeft);
+    ({ user, id }: { user: string; id: string }) => {
+      console.log("👋 User joined:", user);
+      setRemoteUserName(user);
+      setRemoteSocketId(id);
 
-    // 🔥 CRITICAL FIX: Initiate the call immediately when they join
-    handleCallUser(id); 
-  },
-  [handleUserLeft, handleCallUser]
-);
+      // Listen for their leave
+      socketRef.current?.on("user:leave", handleUserLeft);
+
+      // 🔥 CRITICAL FIX: Initiate the call immediately when they join
+      // handleCallUser(id);
+    },
+    [handleUserLeft],
+  );
 
   // camera and audio handlers
   const toggleClientVideo = useCallback(async () => {
@@ -189,7 +192,7 @@ const handleIncommingCall = useCallback(
       });
 
       setClientVideStream(stream);
-      if (remoteSocketId) handleCallUser(remoteSocketId);
+      // if (remoteSocketId) handleCallUser(remoteSocketId);
 
       // 🔥 SEND VIDEO TO PEER
       if (remoteSocketId) {
@@ -200,7 +203,7 @@ const handleIncommingCall = useCallback(
     } catch (err) {
       console.error("Video error:", err);
     }
-  }, [clientVideStream, remoteSocketId, handleCallUser]);
+  }, [clientVideStream, remoteSocketId]);
 
   const toggleClientAudio = useCallback(async () => {
     if (clientAudioStream) {
@@ -228,27 +231,25 @@ const handleIncommingCall = useCallback(
     }
   }, [clientAudioStream, remoteSocketId]);
 
-
-
-  const handleCallAccepted = useCallback(
-    async ({ ans }: { from: string; ans: RTCSessionDescription }) => {
-      await peer.setLocalDescription(ans);
-      console.log("✅ Call accepted");
-    },
-    []
-  );
+  // const handleCallAccepted = useCallback(
+  //   async ({ ans }: { from: string; ans: RTCSessionDescription }) => {
+  //     await peer.setLocalDescription(ans);
+  //     console.log("✅ Call accepted");
+  //   },
+  //   []
+  // );
 
   /* ---------------- use effects ---------------- */
 
-  useEffect(() => {
-    peer.peer.ontrack = (event) => {
-      console.log("🎥 Remote track received");
-      setRemoteVideStream(event.streams[0]);
-    };
-    return () => {
-      peer.peer.ontrack = null;
-    };
-  }, []);
+  // useEffect(() => {
+  //   peer.peer.ontrack = (event) => {
+  //     console.log("🎥 Remote track received");
+  //     setRemoteVideStream(event.streams[0]);
+  //   };
+  //   return () => {
+  //     peer.peer.ontrack = null;
+  //   };
+  // }, []);
   useEffect(() => {
     let socket = socketRef.current;
     if (!socket) {
@@ -259,9 +260,9 @@ const handleIncommingCall = useCallback(
 
     socketRef.current = socket;
 
-    socket.on("ice:candidate", ({ candidate }) => {
-      peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
-    });
+    // socket.on("ice:candidate", ({ candidate }) => {
+    //   peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
+    // });
 
     socket.on("connect", () => {
       console.log("✅ Socket connected:", socket.id);
@@ -277,9 +278,9 @@ const handleIncommingCall = useCallback(
     socket.on("room:join", handleJoinRoom);
     socket.on("user:joined", handleUserJoined);
 
-    socket.on("call:accepted", handleCallAccepted);
+    // socket.on("call:accepted", handleCallAccepted);
 
-    socket.on("incomming:call", handleIncommingCall);
+    // socket.on("incomming:call", handleIncommingCall);
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
@@ -294,23 +295,23 @@ const handleIncommingCall = useCallback(
   }, [
     handleJoinRoom,
     handleUserJoined,
-    handleIncommingCall,
-    handleCallAccepted,
+    // handleIncommingCall,
+    // handleCallAccepted,
   ]);
 
-  useEffect(() => {
-    peer.peer.onicecandidate = (event) => {
-      if (event.candidate && remoteSocketId) {
-        socketRef.current?.emit("ice:candidate", {
-          to: remoteSocketId,
-          candidate: event.candidate,
-        });
-      }
-    };
-    return () => {
-      peer.peer.onicecandidate = null;
-    };
-  }, [remoteSocketId]);
+  // useEffect(() => {
+  //   peer.peer.onicecandidate = (event) => {
+  //     if (event.candidate && remoteSocketId) {
+  //       socketRef.current?.emit("ice:candidate", {
+  //         to: remoteSocketId,
+  //         candidate: event.candidate,
+  //       });
+  //     }
+  //   };
+  //   return () => {
+  //     peer.peer.onicecandidate = null;
+  //   };
+  // }, [remoteSocketId]);
 
   return (
     <>
@@ -461,7 +462,7 @@ const handleIncommingCall = useCallback(
                     </button>
                   </div>
                 </>
-              ) : null}
+              ) : ""}
             </div>
           </div>
 
@@ -501,17 +502,15 @@ const handleIncommingCall = useCallback(
         </div>
 
         {/* Room ID input box - Centered on mobile, Right on desktop */}
-        <div className="roomInputBox absolute bottom-8 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8 flex flex-col items-center z-10 roomInputBoxa">
-          <div>
-            <label
-              htmlFor="room-id"
-              className={` ${
-                started ? "opacity-50" : "block"
-              } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
-            >
-              ── Enter Room ID (Optional) ──
-            </label>
-          </div>
+        <div className="room-id-container">
+          <label
+            htmlFor="room-id"
+            className={`${
+              started ? "opacity-50" : "block"
+            } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
+          >
+            ── Enter Room ID (Optional) ──
+          </label>
           <input
             disabled={started}
             id="room-id"
@@ -519,8 +518,8 @@ const handleIncommingCall = useCallback(
             value={roomId || ""}
             onChange={(e) => setRoomId(e.target.value)}
             placeholder="Room ID"
-            className={` ${
-              started ? "cursor-auto bg-gray-700/50 border-none" : "cursor-auto"
+            className={`${
+              started ? "bg-gray-700/50 border-none" : ""
             } text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
             maxLength={36}
             autoComplete="off"

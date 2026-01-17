@@ -1,17 +1,46 @@
 @import "tailwindcss";
 
 :root {
-  --font-sans: sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-sans:
+    sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
 @theme {
   --default-font-family: "Inter", var(--font-sans);
 }
 
-@media (max-width: 450px) {
-  .roomInputBox {
-    margin-bottom: -10px;
+/* Mobile First: Normal flow, centered, with padding */
+
+.room-id-container {
+  display: flex;
+
+  flex-direction: column;
+
+  align-items: center;
+
+  width: 100%;
+
+  padding-bottom: 2rem; /* Keeps it away from the very bottom edge */
+
+  z-index: 10;
+}
+
+/* Desktop: Return to absolute positioning */
+
+@media (min-width: 768px) {
+  .room-id-container {
+    position: absolute;
+
+    bottom: 2rem;
+
+    right: 2rem;
+
+    width: auto;
+
+    padding-bottom: 0;
   }
 }
+
+/* Optional: Extra breathing room for very small phones */
