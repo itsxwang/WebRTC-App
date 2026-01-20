@@ -11,7 +11,7 @@ const app = express();
 app.use(
   cors({
     origin: "*",
-  })
+  }),
 );
 
 const server = http.createServer(app);
@@ -24,7 +24,6 @@ const io = new Server(server, {
 });
 
 const socketToUser = new Map<string, string>();
-
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
@@ -34,11 +33,11 @@ io.on("connection", (socket: Socket) => {
     "room:join",
     ({ roomId, user }: { roomId: string; user: string }) => {
       let existingUser: string | undefined = Array.from(
-        io.sockets.adapter.rooms.get(roomId) || []
+        io.sockets.adapter.rooms.get(roomId) || [],
       ).pop();
 
       let existingUserName: string | undefined = socketToUser.get(
-        existingUser || ""
+        existingUser || "",
       );
 
       socketToUser.set(socket.id, user);
@@ -60,7 +59,7 @@ io.on("connection", (socket: Socket) => {
         id: socket.id,
         roomId,
       });
-    }
+    },
   );
 
   socket.on("room:leave", (roomId) => {
@@ -93,6 +92,12 @@ io.on("connection", (socket: Socket) => {
   //   io.to(to).emit("ice:candidate", { candidate });
   // });
 
+  // when user start diconnecting
+  socket.on("disconnecting", () => {
+    console.log("rooms before leave:", Array.from(socket.rooms)[1]);
+    socket.to(Array.from(socket.rooms)[1]).emit("user:leave", {});
+  });
+
   // disconnect
   socket.on("disconnect", () => {
     console.log(`User disconnected: ${socket.id}`);
@@ -100,7 +105,7 @@ io.on("connection", (socket: Socket) => {
 });
 
 console.log(
-  `Socket.IO server running on port http://localhost:${process.env.PORT}`
+  `Socket.IO server running on port http://localhost:${process.env.PORT}`,
 );
 
 const PORT = process.env.PORT || 3000;
@@ -110,6 +115,7 @@ io.engine.on("connection_error", (err) => {
   console.log(err.code);
   console.log(err.message);
 });
+
 
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

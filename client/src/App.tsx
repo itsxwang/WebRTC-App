@@ -93,13 +93,13 @@ function App() {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
     const newRoomId = crypto.randomUUID();
-    if (!roomId) {
+    if (!(roomId?.trim())) {
       setRoomId(newRoomId);
     }
     setStarted(true);
 
     socket.emit("room:join", {
-      roomId: roomId || newRoomId,
+      roomId: roomId?.trim() || newRoomId,
       user: userName,
     });
   }, [isConnected, roomId, userName]);
@@ -117,6 +117,11 @@ function App() {
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
+        socketRef.current?.on("user:leave", () => {
+          console.log("👋 User left room");
+          setRemoteSocketId(null);
+          setRemoteUserName(null);
+        });
       }
     },
     [],
@@ -529,5 +534,4 @@ function App() {
     </>
   );
 }
-
 export default App;
