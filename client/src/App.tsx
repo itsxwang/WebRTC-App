@@ -8,7 +8,6 @@ import peer from "./service/peer";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
-
 function App() {
   /* ---------------- States ---------------- */
 
@@ -31,69 +30,13 @@ function App() {
 
   /* ---------------- Callbacks ---------------- */
 
-  // callbacks for usually remote cleint
-
-  // Helper: Attaches your existing video/audio state to the peer connection
-  // const attachTracks = useCallback(() => {
-  //   // Add Video Track if it exists
-  //   if (clientVideStream) {
-  //     clientVideStream.getTracks().forEach((track) => {
-  //       // check if track is already added to avoid errors
-  //       const senders = peer.peer.getSenders();
-  //       if (!senders.find((s) => s.track?.id === track.id)) {
-  //         peer.peer.addTrack(track, clientVideStream);
-  //       }
-  //     });
-  //   }
-  //   // Add Audio Track if it exists
-  //   if (clientAudioStream) {
-  //     clientAudioStream.getTracks().forEach((track) => {
-  //       const senders = peer.peer.getSenders();
-  //       if (!senders.find((s) => s.track?.id === track.id)) {
-  //         peer.peer.addTrack(track, clientAudioStream);
-  //       }
-  //     });
-  //   }
-  // }, [clientVideStream, clientAudioStream]);
-
-  // const handleCallUser = useCallback(
-  //   async (remoteUserId: string) => {
-  //     // 1. Attach media BEFORE creating offer
-  //     // attachTracks();
-
-  //     const offer = await peer.getOffer();
-  //     socketRef.current?.emit("user:call", {
-  //       to: remoteUserId,
-  //       offer,
-  //     });
-  //   },
-  //   []
-  // );
-
-  // const handleIncommingCall = useCallback(
-  //   async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
-  //     console.log("📞 Incoming call from", from);
-  //     setRemoteSocketId(from); // Set the sender as the remote user
-
-  //     // 1. Attach media BEFORE creating answer
-  //     attachTracks();
-
-  //     const ans = await peer.getAnswer(offer);
-  //     socketRef.current?.emit("call:accepted", {
-  //       to: from,
-  //       ans,
-  //     });
-  //   },
-  //   [attachTracks]
-  // );
-
   // callbacks for usually local cleint
 
   const joinRoom = useCallback(async () => {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
     const newRoomId = crypto.randomUUID();
-    if (!(roomId?.trim())) {
+    if (!roomId?.trim()) {
       setRoomId(newRoomId);
     }
     setStarted(true);
@@ -166,7 +109,10 @@ function App() {
     setRemoteSocketId(null);
     setRemoteUserName(null);
   }, []);
-
+  const handleCallUser = useCallback(async (remoteSocketId: string) => {
+    const offer = await peer.getOffer();
+    socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
+  }, []);
   const handleUserJoined = useCallback(
     ({ user, id }: { user: string; id: string }) => {
       console.log("👋 User joined:", user);
@@ -177,9 +123,9 @@ function App() {
       socketRef.current?.on("user:leave", handleUserLeft);
 
       // 🔥 CRITICAL FIX: Initiate the call immediately when they join
-      // handleCallUser(id);
+      handleCallUser(id);
     },
-    [handleUserLeft],
+    [handleUserLeft, handleCallUser],
   );
 
   // camera and audio handlers
@@ -246,15 +192,6 @@ function App() {
 
   /* ---------------- use effects ---------------- */
 
-  // useEffect(() => {
-  //   peer.peer.ontrack = (event) => {
-  //     console.log("🎥 Remote track received");
-  //     setRemoteVideStream(event.streams[0]);
-  //   };
-  //   return () => {
-  //     peer.peer.ontrack = null;
-  //   };
-  // }, []);
   useEffect(() => {
     let socket = socketRef.current;
     if (!socket) {
@@ -264,10 +201,6 @@ function App() {
     }
 
     socketRef.current = socket;
-
-    // socket.on("ice:candidate", ({ candidate }) => {
-    //   peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
-    // });
 
     socket.on("connect", () => {
       console.log("✅ Socket connected:", socket.id);
@@ -282,10 +215,6 @@ function App() {
     // 👇 THESE MUST BE OUTSIDE disconnect
     socket.on("room:join", handleJoinRoom);
     socket.on("user:joined", handleUserJoined);
-
-    // socket.on("call:accepted", handleCallAccepted);
-
-    // socket.on("incomming:call", handleIncommingCall);
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
@@ -467,7 +396,9 @@ function App() {
                     </button>
                   </div>
                 </>
-              ) : ""}
+              ) : (
+                ""
+              )}
             </div>
           </div>
 

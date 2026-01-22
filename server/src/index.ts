@@ -26,7 +26,7 @@ const io = new Server(server, {
 const socketToUser = new Map<string, string>();
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
-
+  
   socketToUser.set(socket.id, "Anonymous");
 
   socket.on(
