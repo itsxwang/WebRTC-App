@@ -113,6 +113,25 @@ function App() {
     const offer = await peer.getOffer();
     socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
   }, []);
+
+  const handleIncommingCall = useCallback(
+    async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
+      setRemoteSocketId(from);
+      const ans = await peer.getAnswer(offer);
+      console.log(`Incomming call!, ${ans} `);
+      socketRef.current?.emit("call:accepted", { to: from, ans });
+    },
+    [],
+  );
+
+    const handleCallAccepted = useCallback(
+    ({ ans }: {  ans: RTCSessionDescription }) => {
+      peer.setLocalDescription(ans);
+      console.log("Call Accepted!, ", ans);
+    },
+    []
+  );
+
   const handleUserJoined = useCallback(
     ({ user, id }: { user: string; id: string }) => {
       console.log("👋 User joined:", user);
@@ -182,13 +201,6 @@ function App() {
     }
   }, [clientAudioStream, remoteSocketId]);
 
-  // const handleCallAccepted = useCallback(
-  //   async ({ ans }: { from: string; ans: RTCSessionDescription }) => {
-  //     await peer.setLocalDescription(ans);
-  //     console.log("✅ Call accepted");
-  //   },
-  //   []
-  // );
 
   /* ---------------- use effects ---------------- */
 
@@ -215,6 +227,8 @@ function App() {
     // 👇 THESE MUST BE OUTSIDE disconnect
     socket.on("room:join", handleJoinRoom);
     socket.on("user:joined", handleUserJoined);
+    socket.on("incomming:call", handleIncommingCall);
+    socket.on("call:accepted", handleCallAccepted);
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
@@ -223,15 +237,12 @@ function App() {
     return () => {
       socket.off("room:join", handleJoinRoom);
       socket.off("user:joined", handleUserJoined);
+      socket.off("incomming:call", handleIncommingCall);
+      socket.off("call:accepted", handleCallAccepted);
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [
-    handleJoinRoom,
-    handleUserJoined,
-    // handleIncommingCall,
-    // handleCallAccepted,
-  ]);
+  }, [handleJoinRoom, handleUserJoined, handleCallAccepted, handleIncommingCall]);
 
   // useEffect(() => {
   //   peer.peer.onicecandidate = (event) => {

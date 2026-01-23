@@ -68,25 +68,25 @@ io.on("connection", (socket: Socket) => {
     console.log(`${socket.id} left ${roomId}`);
   });
 
-  // socket.on(
-  //   "user:call",
-  //   ({ to, offer }: { to: string; offer: RTCSessionDescription }) => {
-  //     io.to(to).emit("incomming:call", {
-  //       from: socket.id,
-  //       offer,
-  //     });
-  //   }
-  // );
+  socket.on(
+    "user:call",
+    ({ to, offer }: { to: string; offer: RTCSessionDescription }) => {
+      io.to(to).emit("incomming:call", {
+        from: socket.id,
+        offer,
+      });
+    }
+  );
 
-  // socket.on(
-  //   "call:accepted",
-  //   ({ to, ans }: { to: string; ans: RTCSessionDescription }) => {
-  //     io.to(to).emit("call:accepted", {
-  //       from: socket.id,
-  //       ans,
-  //     });
-  //   }
-  // );
+  socket.on(
+    "call:accepted",
+    ({ to, ans }: { to: string; ans: RTCSessionDescription }) => {
+      io.to(to).emit("call:accepted", {
+        from: socket.id,
+        ans,
+      });
+    }
+  );
 
   // socket.on("ice:candidate", ({ to, candidate }) => {
   //   io.to(to).emit("ice:candidate", { candidate });
