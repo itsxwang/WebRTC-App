@@ -26,7 +26,7 @@ const io = new Server(server, {
 const socketToUser = new Map<string, string>();
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
-  
+
   socketToUser.set(socket.id, "Anonymous");
 
   socket.on(
@@ -75,7 +75,7 @@ io.on("connection", (socket: Socket) => {
         from: socket.id,
         offer,
       });
-    }
+    },
   );
 
   socket.on(
@@ -85,8 +85,18 @@ io.on("connection", (socket: Socket) => {
         from: socket.id,
         ans,
       });
-    }
+    },
   );
+
+  socket.on("peer:nego:needed", ({ to, offer }) => {
+    console.log("peer:nego:needed", offer);
+    io.to(to).emit("peer:nego:needed", { from: socket.id, offer });
+  });
+
+  socket.on("peer:nego:done", ({ to, ans }) => {
+    console.log("peer:nego:done", ans);
+    io.to(to).emit("peer:nego:final", { from: socket.id, ans });
+  });
 
   // socket.on("ice:candidate", ({ to, candidate }) => {
   //   io.to(to).emit("ice:candidate", { candidate });
@@ -115,7 +125,6 @@ io.engine.on("connection_error", (err) => {
   console.log(err.code);
   console.log(err.message);
 });
-
 
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

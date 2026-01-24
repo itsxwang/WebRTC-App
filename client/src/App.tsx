@@ -8,6 +8,7 @@ import peer from "./service/peer";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
+
 function App() {
   /* ---------------- States ---------------- */
 
@@ -27,7 +28,7 @@ function App() {
 
   const [remoteSocketId, setRemoteSocketId] = useState<string | null>(null);
   const [remoteUserName, setRemoteUserName] = useState<string | null>(null);
-
+  const isMakingOffer = useRef(false);
   /* ---------------- Callbacks ---------------- */
 
   // callbacks for usually local cleint
@@ -124,12 +125,12 @@ function App() {
     [],
   );
 
-    const handleCallAccepted = useCallback(
-    ({ ans }: {  ans: RTCSessionDescription }) => {
+  const handleCallAccepted = useCallback(
+    ({ ans }: { ans: RTCSessionDescription }) => {
       peer.setLocalDescription(ans);
       console.log("Call Accepted!, ", ans);
     },
-    []
+    [],
   );
 
   const handleUserJoined = useCallback(
@@ -145,6 +146,21 @@ function App() {
       handleCallUser(id);
     },
     [handleUserLeft, handleCallUser],
+  );
+
+  const handleNegoNeedIncomming = useCallback(
+    async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
+      const ans = await peer.getAnswer(offer);
+      socketRef.current?.emit("peer:nego:done", { to: from, ans });
+    },
+    [],
+  );
+
+  const handleNegoNeedFinal = useCallback(
+    async ({ ans }: { ans: RTCSessionDescription }) => {
+      await peer.setLocalDescription(ans);
+    },
+    [],
   );
 
   // camera and audio handlers
@@ -201,8 +217,23 @@ function App() {
     }
   }, [clientAudioStream, remoteSocketId]);
 
+  const handleNegoNeeded = useCallback(async () => {
+    if (isMakingOffer.current) return;
+    isMakingOffer.current = true;
+    const offer = await peer.getOffer();
+    socketRef.current?.emit("peer:nego:needed", { offer, to: remoteSocketId });
+     isMakingOffer.current = false;
+  }, [remoteSocketId, socketRef]);
 
   /* ---------------- use effects ---------------- */
+
+  // negotiation useffects
+  useEffect(() => {
+    peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
+    return () => {
+      peer.peer.removeEventListener("negotiationneeded", handleNegoNeeded);
+    };
+  }, [handleNegoNeeded]);
 
   useEffect(() => {
     let socket = socketRef.current;
@@ -214,35 +245,44 @@ function App() {
 
     socketRef.current = socket;
 
-    socket.on("connect", () => {
+    socketRef.current?.on("connect", () => {
       console.log("✅ Socket connected:", socket.id);
       setIsConnected(true);
     });
 
-    socket.on("disconnect", () => {
+    socketRef.current?.on("disconnect", () => {
       console.log("❌ Socket disconnected");
       setIsConnected(false);
     });
 
     // 👇 THESE MUST BE OUTSIDE disconnect
-    socket.on("room:join", handleJoinRoom);
-    socket.on("user:joined", handleUserJoined);
-    socket.on("incomming:call", handleIncommingCall);
-    socket.on("call:accepted", handleCallAccepted);
+    socketRef.current?.on("room:join", handleJoinRoom);
+    socketRef.current?.on("user:joined", handleUserJoined);
+    socketRef.current?.on("incomming:call", handleIncommingCall);
+    socketRef.current?.on("call:accepted", handleCallAccepted);
+    socketRef.current?.on("peer:nego:needed", handleNegoNeedIncomming);
+    socketRef.current?.on("peer:nego:final", handleNegoNeedFinal);
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
     });
 
     return () => {
-      socket.off("room:join", handleJoinRoom);
-      socket.off("user:joined", handleUserJoined);
-      socket.off("incomming:call", handleIncommingCall);
-      socket.off("call:accepted", handleCallAccepted);
-      socket.disconnect();
+      socketRef.current?.off("room:join", handleJoinRoom);
+      socketRef.current?.off("user:joined", handleUserJoined);
+      socketRef.current?.off("incomming:call", handleIncommingCall);
+      socketRef.current?.off("call:accepted", handleCallAccepted);
+      socketRef.current?.disconnect();
       socketRef.current = null;
     };
-  }, [handleJoinRoom, handleUserJoined, handleCallAccepted, handleIncommingCall]);
+  }, [
+    handleNegoNeedFinal,
+    handleNegoNeedIncomming,
+    handleJoinRoom,
+    handleUserJoined,
+    handleCallAccepted,
+    handleIncommingCall,
+  ]);
 
   // useEffect(() => {
   //   peer.peer.onicecandidate = (event) => {
