@@ -98,9 +98,9 @@ io.on("connection", (socket: Socket) => {
     io.to(to).emit("peer:nego:final", { from: socket.id, ans });
   });
 
-  // socket.on("ice:candidate", ({ to, candidate }) => {
-  //   io.to(to).emit("ice:candidate", { candidate });
-  // });
+  socket.on("ice:candidate", ({ to, candidate }) => {
+    io.to(to).emit("ice:candidate", { candidate });
+  });
 
   // when user start diconnecting
   socket.on("disconnecting", () => {

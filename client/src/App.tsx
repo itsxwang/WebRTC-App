@@ -8,7 +8,6 @@ import peer from "./service/peer";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
-
 function App() {
   /* ---------------- States ---------------- */
 
@@ -21,8 +20,11 @@ function App() {
   const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(
     null,
   );
-  const [remoteVideStream] = useState<MediaStream | null>(null);
-  const [remoteAudioStream] = useState<MediaStream | null>(null);
+  const [remoteVideStream, setRemoteVideStream] = useState<MediaStream | null>(
+    null,
+  );
+  const [remoteAudioStream, setRemoteAudioStream] =
+    useState<MediaStream | null>(null);
   const [clientAudioStream, setClientAudioStream] =
     useState<MediaStream | null>(null);
 
@@ -150,6 +152,7 @@ function App() {
 
   const handleNegoNeedIncomming = useCallback(
     async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
+      console.log("handleNegoNeedIncomming", offer);
       const ans = await peer.getAnswer(offer);
       socketRef.current?.emit("peer:nego:done", { to: from, ans });
     },
@@ -158,6 +161,7 @@ function App() {
 
   const handleNegoNeedFinal = useCallback(
     async ({ ans }: { ans: RTCSessionDescription }) => {
+      console.log("handleNegoNeedFinal completed", ans);
       await peer.setLocalDescription(ans);
     },
     [],
@@ -222,7 +226,7 @@ function App() {
     isMakingOffer.current = true;
     const offer = await peer.getOffer();
     socketRef.current?.emit("peer:nego:needed", { offer, to: remoteSocketId });
-     isMakingOffer.current = false;
+    isMakingOffer.current = false;
   }, [remoteSocketId, socketRef]);
 
   /* ---------------- use effects ---------------- */
@@ -284,19 +288,80 @@ function App() {
     handleIncommingCall,
   ]);
 
-  // useEffect(() => {
-  //   peer.peer.onicecandidate = (event) => {
-  //     if (event.candidate && remoteSocketId) {
-  //       socketRef.current?.emit("ice:candidate", {
-  //         to: remoteSocketId,
-  //         candidate: event.candidate,
-  //       });
-  //     }
-  //   };
-  //   return () => {
-  //     peer.peer.onicecandidate = null;
-  //   };
-  // }, [remoteSocketId]);
+  //  ice candidtates useffect
+  useEffect(() => {
+    const onIceCandidate = (event: RTCPeerConnectionIceEvent) => {
+      if (event.candidate && remoteSocketId) {
+        socketRef.current?.emit("ice:candidate", {
+          to: remoteSocketId,
+          candidate: event.candidate.toJSON(),
+        });
+      }
+    };
+
+    peer.peer.onicecandidate = onIceCandidate;
+
+    return () => {
+      peer.peer.onicecandidate = null;
+    };
+  }, [remoteSocketId]);
+
+  // Add listener for incoming candidates:
+  useEffect(() => {
+    socketRef.current?.on("ice:candidate", async ({ candidate }) => {
+      try {
+        await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
+        console.log("Added ICE candidate", candidate);
+      } catch (err) {
+        console.error("Error adding ICE candidate:", err);
+      }
+    });
+
+    return () => {
+      socketRef.current?.off("ice:candidate");
+    };
+  }, []);
+
+  // useEffect for incoming tracks
+  useEffect(() => {
+    const handleTrack = (event: RTCTrackEvent) => {
+      const [remoteStream] = event.streams;
+
+      // Usually one stream with video+audio, but let's be safe
+      if (remoteStream) {
+        console.log("Received remote stream!", remoteStream.getTracks());
+
+        // You can assign to one combined stream or separate
+        // Most common: one <video> for remote (video+audio)
+        // But since you have separate states → you can split
+
+        const videoTrack = remoteStream.getVideoTracks()[0];
+        const audioTrack = remoteStream.getAudioTracks()[0];
+
+        if (videoTrack) {
+          const videoStream = new MediaStream([videoTrack]);
+          setRemoteVideStream(videoStream);
+        }
+
+        if (audioTrack) {
+          const audioStream = new MediaStream([audioTrack]);
+          setRemoteAudioStream(audioStream);
+        }
+
+        // ────────────────────────────────
+        // Simpler & recommended approach:
+        // Just use one remote stream for the <video> element
+        // ────────────────────────────────
+        // setRemoteStream(remoteStream);   // ← add this state instead
+      }
+    };
+
+    peer.peer.addEventListener("track", handleTrack);
+
+    return () => {
+      peer.peer.removeEventListener("track", handleTrack);
+    };
+  }, []);
 
   return (
     <>
@@ -364,7 +429,7 @@ function App() {
               )}
 
               {/* Camera and microphone toggle buttons */}
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4 ">
                 <button
                   onClick={toggleClientVideo}
                   className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
@@ -403,52 +468,53 @@ function App() {
                 </button>
               </div>
             </div>
-
             {/* Remote client */}
-
-            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150">
+            <div className="relative w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150 overflow-hidden">
               {remoteSocketId ? (
                 <>
                   {remoteVideStream ? (
                     <video
                       autoPlay
                       playsInline
-                      className="rounded-3xl w-full h-full object-cover"
+                      className="w-full h-full object-cover rounded-3xl"
                       ref={(video) => {
-                        if (video) {
-                          video.srcObject = remoteVideStream;
-                        }
+                        if (video) video.srcObject = remoteVideStream;
                       }}
                     />
                   ) : (
                     <div className="flex flex-col justify-center items-center h-full text-center p-4">
                       <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
-                      <p className="text-gray-400 text-lg md:text-xl">
-                        {remoteUserName ? remoteUserName : ""}
-                      </p>
+                      {remoteUserName && (
+                        <p className="text-gray-300 text-lg md:text-xl font-medium font-sans mt-2">
+                          Anonymous
+                        </p>
+                      )}
                     </div>
                   )}
 
-                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
-                    <button className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
+                  {/* Status buttons – always at bottom center */}
+                  <div className="absolute bottom-0.5 md:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 sm:gap-4 z-10">
+                    <button className="p-2.5 sm:p-3 rounded-full">
                       {remoteVideStream ? (
-                        <IoVideocamOutline className="text-2xl text-green-400" />
+                        <IoVideocamOutline className="text-xl sm:text-2xl text-green-400" />
                       ) : (
-                        <IoVideocamOffOutline className="text-2xl text-red-400" />
+                        <IoVideocamOffOutline className="text-xl sm:text-2xl text-red-400" />
                       )}
                     </button>
 
-                    <button className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
+                    <button className="p-2.5 sm:p-3 rounded-full ">
                       {remoteAudioStream ? (
-                        <PiMicrophone className="text-2xl text-green-400" />
+                        <PiMicrophone className="text-xl sm:text-2xl text-green-400" />
                       ) : (
-                        <PiMicrophoneSlash className="text-2xl text-red-400" />
+                        <PiMicrophoneSlash className="text-xl sm:text-2xl text-red-400" />
                       )}
                     </button>
                   </div>
                 </>
               ) : (
-                ""
+                <div className="flex items-center justify-center h-full text-gray-400 text-lg">
+                  Waiting for someone...
+                </div>
               )}
             </div>
           </div>
