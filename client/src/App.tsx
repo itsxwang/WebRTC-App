@@ -340,7 +340,7 @@ function App() {
 
         if (videoTrack) {
           const videoStream = new MediaStream([videoTrack]);
-          setRemoteVideStream(videoStream);
+          setRemoteVideStream(videoStream);   
         }
 
         if (audioTrack) {
@@ -486,7 +486,7 @@ function App() {
                       <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
                       {remoteUserName && (
                         <p className="text-gray-300 text-lg md:text-xl font-medium font-sans mt-2">
-                          Anonymous
+                          {remoteUserName}
                         </p>
                       )}
                     </div>
