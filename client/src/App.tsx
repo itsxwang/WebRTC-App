@@ -37,11 +37,12 @@ function App() {
 
   /* ---------------- Helpers ---------------- */
 
+  // 🔥 FIXED: Always send state to server, even if remoteSocketId is null (user is alone)
   const sendMediaState = useCallback(
     (videoEnabled: boolean, audioEnabled: boolean) => {
-      if (socketRef.current && remoteSocketId) {
+      if (socketRef.current) {
         socketRef.current.emit("media:state", {
-          to: remoteSocketId,
+          to: remoteSocketId, // Can be null, server will handle it
           mediaState: { video: videoEnabled, audio: audioEnabled },
         });
       }
@@ -49,20 +50,16 @@ function App() {
     [remoteSocketId]
   );
 
-  // 🔥 NEW: Helper to add tracks to peer if they aren't already added.
-  // This ensures that if you turned on video BEFORE joining, it gets sent.
   const syncLocalTracks = useCallback(() => {
     if (!peer.peer) return;
 
     const stream = localStreamRef.current;
     
-    // 1. Sync Video
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack && !videoSenderRef.current) {
         videoSenderRef.current = peer.peer.addTrack(videoTrack, stream);
     }
 
-    // 2. Sync Audio
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack && !audioSenderRef.current) {
         audioSenderRef.current = peer.peer.addTrack(audioTrack, stream);
@@ -79,7 +76,6 @@ function App() {
     setRoomId(newRoomId);
     setStarted(true);
 
-    // 🔥 NEW: Send my current media state when joining
     const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
     const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
 
@@ -102,7 +98,6 @@ function App() {
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
-        // 🔥 NEW: If the person already in the room has video on, update UI
         if (existingUserMediaState) {
           setRemoteMediaState(existingUserMediaState);
         }
@@ -112,13 +107,9 @@ function App() {
   );
 
   const cleanupMedia = useCallback(() => {
-    // Stop local tracks
-    localStreamRef.current.getTracks().forEach((t) => {
-      t.stop();
-      localStreamRef.current.removeTrack(t);
-    });
+    // 🔥 FIXED: Do NOT stop the tracks. Just reset the Peer Connection refs.
+    // This keeps the camera light ON when switching rooms.
     
-    // Reset refs
     videoSenderRef.current = null;
     audioSenderRef.current = null;
     
@@ -127,7 +118,6 @@ function App() {
     setRemoteSocketId(null);
     setRemoteUserName(null);
     
-    // 🔥 NEW: Fully reset the peer connection so we don't have stale tracks
     peer.reset(); 
     
     setLocalMediaTrigger((prev) => prev + 1);
@@ -145,19 +135,19 @@ function App() {
     const socket = socketRef.current;
     if (!socket || !isConnected || !roomId) return;
     
-    cleanupMedia();
+    cleanupMedia(); // Resets peer, but keeps localStreamRef tracks alive!
     
     const newRoomId = crypto.randomUUID();
     socket.emit("room:leave", roomId);
     
-    // Emitting join will naturally trigger the media state send in joinRoom logic if we reused it,
-    // but here we manually emit. Since cleanupMedia stopped tracks, we emit false/false.
-    // If you wanted to KEEP video on, you'd need to NOT stop tracks in cleanupMedia. 
-    // Assuming standard behavior (reset):
+    // 🔥 FIXED: Send the ACTUAL current state of the tracks
+    const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
+    const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
+
     socket.emit("room:join", { 
         roomId: newRoomId, 
         user: userName,
-        mediaState: { video: false, audio: false } 
+        mediaState: { video: hasVideo, audio: hasAudio } 
     });
     setRoomId(newRoomId);
   }, [isConnected, roomId, userName, cleanupMedia]);
@@ -170,22 +160,14 @@ function App() {
   }, []);
 
   const handleCallUser = useCallback(async (remoteSocketId: string) => {
-    // 🔥 NEW: Ensure tracks are attached before calling
     syncLocalTracks();
     const offer = await peer.getOffer();
     socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
   }, [syncLocalTracks]);
 
   const handleIncommingCall = useCallback(
-    async ({
-      from,
-      offer,
-    }: {
-      from: string;
-      offer: RTCSessionDescription;
-    }) => {
+    async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
       setRemoteSocketId(from);
-      // 🔥 NEW: Ensure tracks are attached before answering
       syncLocalTracks(); 
       const ans = await peer.getAnswer(offer);
       socketRef.current?.emit("call:accepted", { to: from, ans });
@@ -204,7 +186,6 @@ function App() {
     ({ user, id, mediaState }: { user: string; id: string; mediaState?: { video: boolean; audio: boolean } }) => {
       setRemoteUserName(user);
       setRemoteSocketId(id);
-      // 🔥 NEW: Update UI with the new user's media state
       if (mediaState) {
         setRemoteMediaState(mediaState);
       }
@@ -214,13 +195,7 @@ function App() {
   );
 
   const handleNegoNeedIncomming = useCallback(
-    async ({
-      from,
-      offer,
-    }: {
-      from: string;
-      offer: RTCSessionDescription;
-    }) => {
+    async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
       const ans = await peer.getAnswer(offer);
       socketRef.current?.emit("peer:nego:done", { to: from, ans });
     },
@@ -244,7 +219,6 @@ function App() {
   /* ---------------- Toggle Logic ---------------- */
 
   const toggleClientVideo = useCallback(async () => {
-    // If peer is closed (reset), we just manage local stream refs
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
 
     if (videoTrack) {
@@ -265,7 +239,6 @@ function App() {
         const newTrack = stream.getVideoTracks()[0];
         localStreamRef.current.addTrack(newTrack);
         
-        // If we are already connected, add/replace track
         if (peer.peer && peer.peer.signalingState !== 'closed') {
              if (videoSenderRef.current) {
                 await videoSenderRef.current.replaceTrack(newTrack);
@@ -335,14 +308,13 @@ function App() {
 
   /* ---------------- Effects ---------------- */
 
-  // Re-attach listener if peer is reset
   useEffect(() => {
     if(!peer.peer) return;
     peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
     return () => {
         peer.peer?.removeEventListener("negotiationneeded", handleNegoNeeded);
     }
-  }, [handleNegoNeeded, started]); // Depend on 'started' to re-bind after reset
+  }, [handleNegoNeeded, started]);
 
   useEffect(() => {
     let socket = socketRef.current;
@@ -363,7 +335,6 @@ function App() {
     socket.on("media:state", handleRemoteMediaState);
     socket.on("ice:candidate", async ({ candidate }) => {
       try {
-        // Check peer exists
         if(peer.peer) {
             await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
         }
@@ -494,7 +465,6 @@ function App() {
             <div className="relative w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150 overflow-hidden">
               {remoteSocketId ? (
                 <>
-                  {/* FIX: Always render audio if stream exists, even if video is off */}
                   {remoteStream && (
                     <audio
                       autoPlay
@@ -509,7 +479,7 @@ function App() {
                     <video
                       autoPlay
                       playsInline
-                      muted // Muted to prevent echo since we have the audio tag above
+                      muted 
                       className="w-full h-full object-cover rounded-3xl"
                       ref={(video) => {
                         if (video) video.srcObject = remoteStream;

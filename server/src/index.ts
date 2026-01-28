@@ -24,19 +24,18 @@ const io = new Server(server, {
 });
 
 const socketToUser = new Map<string, string>();
-// 🔥 NEW: Track media state on server to sync immediately on join
 const socketToMediaState = new Map<string, { video: boolean; audio: boolean }>();
 
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
   socketToUser.set(socket.id, "Anonymous");
-  // Default state
+  // Initialize with false/false
   socketToMediaState.set(socket.id, { video: false, audio: false });
 
   socket.on(
     "room:join",
-    ({ roomId, user, mediaState }: { roomId: string; user: string; mediaState: { video: boolean, audio: boolean } }) => {
+    ({ roomId, user, mediaState }: { roomId: string; user: string; mediaState: { video: boolean; audio: boolean } }) => {
       let existingUser: string | undefined = Array.from(
         io.sockets.adapter.rooms.get(roomId) || [],
       ).pop();
@@ -45,12 +44,13 @@ io.on("connection", (socket: Socket) => {
         existingUser || "",
       );
       
-      let existingUserMediaState: { video: boolean, audio: boolean } | undefined = undefined;
+      let existingUserMediaState: { video: boolean; audio: boolean } | undefined = undefined;
       if (existingUser) {
         existingUserMediaState = socketToMediaState.get(existingUser);
       }
 
       socketToUser.set(socket.id, user);
+      
       // Update the joiner's state immediately
       if (mediaState) {
         socketToMediaState.set(socket.id, mediaState);
@@ -105,10 +105,14 @@ io.on("connection", (socket: Socket) => {
     io.to(to).emit("ice:candidate", { candidate });
   });
 
+  // 🔥 FIXED: Always update server state, even if 'to' is null (User is alone)
   socket.on("media:state", ({ to, mediaState }) => {
-    // Update server record
     socketToMediaState.set(socket.id, mediaState);
-    io.to(to).emit("media:state", { from: socket.id, mediaState });
+    
+    // Only forward to remote peer if they exist
+    if (to) {
+      io.to(to).emit("media:state", { from: socket.id, mediaState });
+    }
   });
 
   socket.on("disconnecting", () => {
