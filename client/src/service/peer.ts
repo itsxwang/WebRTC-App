@@ -41,13 +41,28 @@ class PeerService {
 
   async getOffer() {
     if (this.peer) {
+      // 🔥 FIX: Ensure we offer "receive" capabilities for Audio & Video
+      // even if we (the caller) don't have a track attached yet.
+      // This ensures the other peer can send us their video if they have it.
+      
+      const transceivers = this.peer.getTransceivers();
+      
+      const hasVideo = transceivers.some(t => t.receiver.track.kind === 'video');
+      const hasAudio = transceivers.some(t => t.receiver.track.kind === 'audio');
+
+      if (!hasVideo) {
+        this.peer.addTransceiver("video", { direction: "recvonly" });
+      }
+      if (!hasAudio) {
+        this.peer.addTransceiver("audio", { direction: "recvonly" });
+      }
+
       const offer = await this.peer.createOffer();
       await this.peer.setLocalDescription(new RTCSessionDescription(offer));
       return offer;
     }
   }
 
-  // 🔥 NEW: Reset connection for the next user
   reset() {
     if (this.peer) {
       this.peer.close();

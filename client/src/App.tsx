@@ -37,12 +37,11 @@ function App() {
 
   /* ---------------- Helpers ---------------- */
 
-  // 🔥 FIXED: Always send state to server, even if remoteSocketId is null (user is alone)
   const sendMediaState = useCallback(
     (videoEnabled: boolean, audioEnabled: boolean) => {
       if (socketRef.current) {
         socketRef.current.emit("media:state", {
-          to: remoteSocketId, // Can be null, server will handle it
+          to: remoteSocketId,
           mediaState: { video: videoEnabled, audio: audioEnabled },
         });
       }
@@ -57,6 +56,7 @@ function App() {
     
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack && !videoSenderRef.current) {
+        // If connection is new/reset, add the track
         videoSenderRef.current = peer.peer.addTrack(videoTrack, stream);
     }
 
@@ -106,10 +106,9 @@ function App() {
     []
   );
 
+  // Triggered when WE leave the room
   const cleanupMedia = useCallback(() => {
-    // 🔥 FIXED: Do NOT stop the tracks. Just reset the Peer Connection refs.
-    // This keeps the camera light ON when switching rooms.
-    
+    // Reset Senders but KEEP tracks alive in localStreamRef
     videoSenderRef.current = null;
     audioSenderRef.current = null;
     
@@ -118,6 +117,7 @@ function App() {
     setRemoteSocketId(null);
     setRemoteUserName(null);
     
+    // Kill the connection
     peer.reset(); 
     
     setLocalMediaTrigger((prev) => prev + 1);
@@ -135,12 +135,11 @@ function App() {
     const socket = socketRef.current;
     if (!socket || !isConnected || !roomId) return;
     
-    cleanupMedia(); // Resets peer, but keeps localStreamRef tracks alive!
+    cleanupMedia(); 
     
     const newRoomId = crypto.randomUUID();
     socket.emit("room:leave", roomId);
     
-    // 🔥 FIXED: Send the ACTUAL current state of the tracks
     const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
     const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
 
@@ -152,11 +151,19 @@ function App() {
     setRoomId(newRoomId);
   }, [isConnected, roomId, userName, cleanupMedia]);
 
+  // 🔥 CRITICAL FIX: Triggered when THEY leave the room
   const handleUserLeft = useCallback(() => {
     setRemoteSocketId(null);
     setRemoteUserName(null);
     setRemoteStream(null);
     setRemoteMediaState({ audio: false, video: false });
+
+    // 🔥 WE MUST RESET THE CONNECTION HERE.
+    // If we don't, we are holding a "zombie" connection to the old user.
+    // When a new user (or the same one) joins, we need a fresh start.
+    peer.reset();
+    videoSenderRef.current = null;
+    audioSenderRef.current = null;
   }, []);
 
   const handleCallUser = useCallback(async (remoteSocketId: string) => {
@@ -239,6 +246,7 @@ function App() {
         const newTrack = stream.getVideoTracks()[0];
         localStreamRef.current.addTrack(newTrack);
         
+        // If connection is active/stable, attach immediately
         if (peer.peer && peer.peer.signalingState !== 'closed') {
              if (videoSenderRef.current) {
                 await videoSenderRef.current.replaceTrack(newTrack);
@@ -308,13 +316,14 @@ function App() {
 
   /* ---------------- Effects ---------------- */
 
+  // Re-bind negotiation listener whenever 'started' or peer resets
   useEffect(() => {
     if(!peer.peer) return;
     peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
     return () => {
         peer.peer?.removeEventListener("negotiationneeded", handleNegoNeeded);
     }
-  }, [handleNegoNeeded, started]);
+  }, [handleNegoNeeded, started, remoteSocketId]); // remoteSocketId dependency helps re-bind on new call
 
   useEffect(() => {
     let socket = socketRef.current;
@@ -377,7 +386,7 @@ function App() {
     };
     peer.peer.addEventListener("track", handleTrack);
     return () => peer.peer?.removeEventListener("track", handleTrack);
-  }, [started]);
+  }, [started, remoteSocketId]);
 
   const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
   const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
@@ -536,7 +545,7 @@ function App() {
             {started && (
               <button
                 onClick={() => joinNextRoom()}
-                className="px-8 md:px-16 py-3 md:py-4 bg-linear-to-r from-yellow-400 via-yellow-300 to-yellow-500 rounded-full font-bold text-base md:text-lg shadow-xl shadow-yellow-200/30 hover:shadow-yellow-400/50 hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-yellow-200/40 hover:border-yellow-400/60 focus:outline-none focus:ring-2 focus:ring-yellow-200/40"
+                className="cursor-pointer px-8 md:px-16 py-3 md:py-4 bg-linear-to-r from-yellow-400 via-yellow-300 to-yellow-500 rounded-full font-bold text-base md:text-lg shadow-xl shadow-yellow-200/30 hover:shadow-yellow-400/50 hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-yellow-200/40 hover:border-yellow-400/60 focus:outline-none focus:ring-2 focus:ring-yellow-200/40"
               >
                 Next
               </button>
