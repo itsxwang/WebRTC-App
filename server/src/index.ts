@@ -24,15 +24,19 @@ const io = new Server(server, {
 });
 
 const socketToUser = new Map<string, string>();
+// 🔥 NEW: Track media state on server to sync immediately on join
+const socketToMediaState = new Map<string, { video: boolean; audio: boolean }>();
 
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
   socketToUser.set(socket.id, "Anonymous");
+  // Default state
+  socketToMediaState.set(socket.id, { video: false, audio: false });
 
   socket.on(
     "room:join",
-    ({ roomId, user }: { roomId: string; user: string }) => {
+    ({ roomId, user, mediaState }: { roomId: string; user: string; mediaState: { video: boolean, audio: boolean } }) => {
       let existingUser: string | undefined = Array.from(
         io.sockets.adapter.rooms.get(roomId) || [],
       ).pop();
@@ -40,23 +44,37 @@ io.on("connection", (socket: Socket) => {
       let existingUserName: string | undefined = socketToUser.get(
         existingUser || "",
       );
+      
+      let existingUserMediaState: { video: boolean, audio: boolean } | undefined = undefined;
+      if (existingUser) {
+        existingUserMediaState = socketToMediaState.get(existingUser);
+      }
 
       socketToUser.set(socket.id, user);
+      // Update the joiner's state immediately
+      if (mediaState) {
+        socketToMediaState.set(socket.id, mediaState);
+      }
+      
       socket.join(roomId);
 
       console.log(`${user} joined room: ${roomId}`);
 
+      // Send existing user details + THEIR media state to the joiner
       socket.emit("room:join", {
         roomId,
         user,
         existingUser,
         existingUserName,
+        existingUserMediaState, 
       });
 
+      // Notify the room (existing user) about the new guy + send NEW GUY'S media state
       socket.to(roomId).emit("user:joined", {
         user,
         id: socket.id,
         roomId,
+        mediaState: mediaState || { video: false, audio: false }
       });
     },
   );
@@ -87,15 +105,14 @@ io.on("connection", (socket: Socket) => {
     io.to(to).emit("ice:candidate", { candidate });
   });
 
-  // 🔥 NEW: Handle Media State Sync (Icons)
   socket.on("media:state", ({ to, mediaState }) => {
+    // Update server record
+    socketToMediaState.set(socket.id, mediaState);
     io.to(to).emit("media:state", { from: socket.id, mediaState });
   });
 
   socket.on("disconnecting", () => {
-    // Notify room before full disconnect
     const rooms = Array.from(socket.rooms);
-    // rooms[0] is usually socket.id, rooms[1] is the joined room
     rooms.forEach((room) => {
       if (room !== socket.id) {
         socket.to(room).emit("user:leave", {});
@@ -106,6 +123,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("disconnect", () => {
     console.log(`User disconnected: ${socket.id}`);
     socketToUser.delete(socket.id);
+    socketToMediaState.delete(socket.id);
   });
 });
 

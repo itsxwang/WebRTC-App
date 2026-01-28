@@ -1,16 +1,23 @@
 class PeerService {
-  public peer: RTCPeerConnection;
+  public peer: RTCPeerConnection | null = null;
+
   constructor() {
-    this.peer = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: [
-            "stun:stun.l.google.com:19302",
-            "stun:global.stun.twilio.com:3478",
-          ],
-        },
-      ],
-    });
+    this.initPeer();
+  }
+
+  initPeer() {
+    if (!this.peer) {
+      this.peer = new RTCPeerConnection({
+        iceServers: [
+          {
+            urls: [
+              "stun:stun.l.google.com:19302",
+              "stun:global.stun.twilio.com:3478",
+            ],
+          },
+        ],
+      });
+    }
   }
 
   async getAnswer(offer: RTCSessionDescription) {
@@ -38,6 +45,15 @@ class PeerService {
       await this.peer.setLocalDescription(new RTCSessionDescription(offer));
       return offer;
     }
+  }
+
+  // 🔥 NEW: Reset connection for the next user
+  reset() {
+    if (this.peer) {
+      this.peer.close();
+      this.peer = null;
+    }
+    this.initPeer();
   }
 }
 
