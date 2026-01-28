@@ -18,12 +18,13 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: "*", // Allow all for dev
     methods: ["GET", "POST"],
   },
 });
 
 const socketToUser = new Map<string, string>();
+
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
 
@@ -45,7 +46,6 @@ io.on("connection", (socket: Socket) => {
 
       console.log(`${user} joined room: ${roomId}`);
 
-      // this to tell new user that he joined successfully - we can also do io.to(socket.id).emit = does same thing
       socket.emit("room:join", {
         roomId,
         user,
@@ -53,7 +53,6 @@ io.on("connection", (socket: Socket) => {
         existingUserName,
       });
 
-      // this one to tell existing users that new user joined
       socket.to(roomId).emit("user:joined", {
         user,
         id: socket.id,
@@ -68,33 +67,19 @@ io.on("connection", (socket: Socket) => {
     console.log(`${socket.id} left ${roomId}`);
   });
 
-  socket.on(
-    "user:call",
-    ({ to, offer }: { to: string; offer: RTCSessionDescription }) => {
-      io.to(to).emit("incomming:call", {
-        from: socket.id,
-        offer,
-      });
-    },
-  );
+  socket.on("user:call", ({ to, offer }) => {
+    io.to(to).emit("incomming:call", { from: socket.id, offer });
+  });
 
-  socket.on(
-    "call:accepted",
-    ({ to, ans }: { to: string; ans: RTCSessionDescription }) => {
-      io.to(to).emit("call:accepted", {
-        from: socket.id,
-        ans,
-      });
-    },
-  );
+  socket.on("call:accepted", ({ to, ans }) => {
+    io.to(to).emit("call:accepted", { from: socket.id, ans });
+  });
 
   socket.on("peer:nego:needed", ({ to, offer }) => {
-    console.log("peer:nego:needed", offer);
     io.to(to).emit("peer:nego:needed", { from: socket.id, offer });
   });
 
   socket.on("peer:nego:done", ({ to, ans }) => {
-    console.log("peer:nego:done", ans);
     io.to(to).emit("peer:nego:final", { from: socket.id, ans });
   });
 
@@ -102,30 +87,29 @@ io.on("connection", (socket: Socket) => {
     io.to(to).emit("ice:candidate", { candidate });
   });
 
-  // when user start diconnecting
-  socket.on("disconnecting", () => {
-    console.log("rooms before leave:", Array.from(socket.rooms)[1]);
-    socket.to(Array.from(socket.rooms)[1]).emit("user:leave", {});
+  // 🔥 NEW: Handle Media State Sync (Icons)
+  socket.on("media:state", ({ to, mediaState }) => {
+    io.to(to).emit("media:state", { from: socket.id, mediaState });
   });
 
-  // disconnect
+  socket.on("disconnecting", () => {
+    // Notify room before full disconnect
+    const rooms = Array.from(socket.rooms);
+    // rooms[0] is usually socket.id, rooms[1] is the joined room
+    rooms.forEach((room) => {
+      if (room !== socket.id) {
+        socket.to(room).emit("user:leave", {});
+      }
+    });
+  });
+
   socket.on("disconnect", () => {
     console.log(`User disconnected: ${socket.id}`);
+    socketToUser.delete(socket.id);
   });
 });
 
-console.log(
-  `Socket.IO server running on port http://localhost:${process.env.PORT}`,
-);
-
 const PORT = process.env.PORT || 3000;
-
-io.engine.on("connection_error", (err) => {
-  console.log("ENGINE ERROR");
-  console.log(err.code);
-  console.log(err.message);
-});
-
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

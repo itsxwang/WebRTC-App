@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
-import { PiMicrophone } from "react-icons/pi";
-import { PiMicrophoneSlash } from "react-icons/pi";
-import { IoVideocamOutline } from "react-icons/io5";
-import { IoVideocamOffOutline } from "react-icons/io5";
+import { PiMicrophone, PiMicrophoneSlash } from "react-icons/pi";
+import { IoVideocamOutline, IoVideocamOffOutline } from "react-icons/io5";
 import peer from "./service/peer";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
+
 function App() {
   /* ---------------- States ---------------- */
 
@@ -17,35 +16,63 @@ function App() {
   const [userName, setUserName] = useState("Anonymous");
   const [roomId, setRoomId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const [clientVideStream, setClientVideStream] = useState<MediaStream | null>(
-    null,
-  );
-  const [remoteVideStream, setRemoteVideStream] = useState<MediaStream | null>(
-    null,
-  );
-  const [remoteAudioStream, setRemoteAudioStream] =
-    useState<MediaStream | null>(null);
-  const [clientAudioStream, setClientAudioStream] =
-    useState<MediaStream | null>(null);
+
+  // Combined Local Stream State
+  // We use a Ref for the actual MediaStream to keep the ID constant (Critical for WebRTC)
+  // We use state (myStream) only to trigger UI re-renders
+  const localStreamRef = useRef<MediaStream>(new MediaStream());
+  const [myStream, setMyStream] = useState<MediaStream | null>(null);
+
+  // References to WebRTC Senders (Fixes the "2-3 times" bug)
+  const videoSenderRef = useRef<RTCRtpSender | null>(null);
+  const audioSenderRef = useRef<RTCRtpSender | null>(null);
+
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  
+  // Icon State for Remote Peer
+  const [remoteMediaState, setRemoteMediaState] = useState({
+    audio: false,
+    video: false,
+  });
 
   const [remoteSocketId, setRemoteSocketId] = useState<string | null>(null);
   const [remoteUserName, setRemoteUserName] = useState<string | null>(null);
   const isMakingOffer = useRef(false);
-  /* ---------------- Callbacks ---------------- */
 
-  // callbacks for usually local cleint
+  /* ---------------- Helpers ---------------- */
+
+  // Helper: Send our media state (Icon status) to the remote peer
+  const sendMediaState = useCallback(
+    (videoEnabled: boolean, audioEnabled: boolean) => {
+      if (socketRef.current && remoteSocketId) {
+        socketRef.current.emit("media:state", {
+          to: remoteSocketId,
+          mediaState: { video: videoEnabled, audio: audioEnabled },
+        });
+      }
+    },
+    [remoteSocketId]
+  );
+
+  // Helper: Force UI update for local stream
+  const refreshLocalStreamState = () => {
+    // We create a new object wrapper to force React to re-render, 
+    // but the underlying tracks are from the stable localStreamRef
+    setMyStream(new MediaStream(localStreamRef.current.getTracks()));
+  };
+
+  /* ---------------- Callbacks ---------------- */
 
   const joinRoom = useCallback(async () => {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
-    const newRoomId = crypto.randomUUID();
-    if (!roomId?.trim()) {
-      setRoomId(newRoomId);
-    }
+    const newRoomId = roomId?.trim() || crypto.randomUUID();
+    
+    setRoomId(newRoomId);
     setStarted(true);
 
     socket.emit("room:join", {
-      roomId: roomId?.trim() || newRoomId,
+      roomId: newRoomId,
       user: userName,
     });
   }, [isConnected, roomId, userName]);
@@ -59,39 +86,55 @@ function App() {
     }) => {
       const { roomId, user, existingUser, existingUserName } = data;
       console.log("⬅️ Successfully Joined room:", roomId, user);
-      console.log(existingUser);
+      
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
-        socketRef.current?.on("user:leave", () => {
-          console.log("👋 User left room");
-          setRemoteSocketId(null);
-          setRemoteUserName(null);
-        });
       }
     },
     [],
   );
+
+  const cleanupMedia = useCallback(() => {
+    // Stop all tracks in the ref
+    localStreamRef.current.getTracks().forEach((t) => {
+        t.stop();
+        localStreamRef.current.removeTrack(t);
+    });
+    setMyStream(null);
+
+    // Reset Senders
+    videoSenderRef.current = null;
+    audioSenderRef.current = null;
+    
+    // Clear Peer Connection Tracks
+    peer.peer.getSenders().forEach((sender) => peer.peer.removeTrack(sender));
+
+    // Reset Remote
+    setRemoteStream(null);
+    setRemoteMediaState({ audio: false, video: false });
+    setRemoteSocketId(null);
+    setRemoteUserName(null);
+  }, []);
 
   const leaveRoom = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !roomId) return;
 
     socket.emit("room:leave", roomId);
-
     console.log("⬅️ Left room:", roomId);
 
     setStarted(false);
-    setRemoteSocketId(null);
-    setRemoteUserName(null);
-  }, [roomId]);
+    cleanupMedia();
+  }, [roomId, cleanupMedia]);
 
   const joinNextRoom = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !isConnected || !roomId) return;
 
-    const newRoomId = crypto.randomUUID();
+    cleanupMedia();
 
+    const newRoomId = crypto.randomUUID();
     socket.emit("room:leave", roomId);
     socket.emit("room:join", {
       roomId: newRoomId,
@@ -99,19 +142,17 @@ function App() {
     });
 
     setRoomId(newRoomId);
-
-    // Reset remote state
-    setRemoteSocketId(null);
-    setRemoteUserName(null);
-
     console.log("🔁 Switched to room:", newRoomId);
-  }, [isConnected, roomId, userName]);
+  }, [isConnected, roomId, userName, cleanupMedia]);
 
   const handleUserLeft = useCallback(() => {
     console.log("👋 User left room");
     setRemoteSocketId(null);
     setRemoteUserName(null);
+    setRemoteStream(null);
+    setRemoteMediaState({ audio: false, video: false });
   }, []);
+
   const handleCallUser = useCallback(async (remoteSocketId: string) => {
     const offer = await peer.getOffer();
     socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
@@ -140,14 +181,11 @@ function App() {
       console.log("👋 User joined:", user);
       setRemoteUserName(user);
       setRemoteSocketId(id);
-
-      // Listen for their leave
-      socketRef.current?.on("user:leave", handleUserLeft);
-
-      // 🔥 CRITICAL FIX: Initiate the call immediately when they join
+      
+      // Call immediately
       handleCallUser(id);
     },
-    [handleUserLeft, handleCallUser],
+    [handleCallUser],
   );
 
   const handleNegoNeedIncomming = useCallback(
@@ -167,71 +205,127 @@ function App() {
     [],
   );
 
-  // camera and audio handlers
+  // Icon Sync Handler
+  const handleRemoteMediaState = useCallback(
+    ({ mediaState }: { mediaState: { video: boolean; audio: boolean } }) => {
+      setRemoteMediaState(mediaState);
+    },
+    [],
+  );
+
+  /* ---------------- Media Toggles (Fixed) ---------------- */
+
   const toggleClientVideo = useCallback(async () => {
-    if (clientVideStream) {
-      clientVideStream.getTracks().forEach((track) => track.stop());
-      setClientVideStream(null);
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+
+    // 1. Turning OFF
+    if (videoTrack) {
+      videoTrack.stop();
+      localStreamRef.current.removeTrack(videoTrack);
+      refreshLocalStreamState();
+
+      // Replace sender track with null (keeps connection, stops video)
+      if (videoSenderRef.current) {
+        videoSenderRef.current.replaceTrack(null);
+      }
+
+      const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
+      sendMediaState(false, hasAudio);
       return;
     }
 
+    // 2. Turning ON
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
-        audio: false,
+        audio: false, 
       });
+      const newTrack = stream.getVideoTracks()[0];
 
-      setClientVideStream(stream);
-      // if (remoteSocketId) handleCallUser(remoteSocketId);
+      localStreamRef.current.addTrack(newTrack);
+      refreshLocalStreamState();
 
-      // 🔥 SEND VIDEO TO PEER
       if (remoteSocketId) {
-        stream.getTracks().forEach((track) => {
-          peer.peer.addTrack(track, stream);
-        });
+        if (videoSenderRef.current) {
+          // If we have a sender, just reuse it (Fast, no nego needed usually)
+          await videoSenderRef.current.replaceTrack(newTrack);
+        } else {
+          // If first time, add track to peer attached to our STABLE stream ID
+          const sender = peer.peer.addTrack(newTrack, localStreamRef.current);
+          videoSenderRef.current = sender;
+        }
       }
+      
+      const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
+      sendMediaState(true, hasAudio);
+
     } catch (err) {
       console.error("Video error:", err);
     }
-  }, [clientVideStream, remoteSocketId]);
+  }, [remoteSocketId, sendMediaState]);
 
   const toggleClientAudio = useCallback(async () => {
-    if (clientAudioStream) {
-      clientAudioStream.getTracks().forEach((track) => track.stop());
-      setClientAudioStream(null);
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+
+    // 1. Turning OFF
+    if (audioTrack) {
+      audioTrack.stop();
+      localStreamRef.current.removeTrack(audioTrack);
+      refreshLocalStreamState();
+
+      if (audioSenderRef.current) {
+        audioSenderRef.current.replaceTrack(null);
+      }
+
+      const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
+      sendMediaState(hasVideo, false);
       return;
     }
 
+    // 2. Turning ON
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: false,
       });
+      const newTrack = stream.getAudioTracks()[0];
 
-      setClientAudioStream(stream);
+      localStreamRef.current.addTrack(newTrack);
+      refreshLocalStreamState();
 
-      // 🔥 SEND AUDIO TO PEER
       if (remoteSocketId) {
-        stream.getTracks().forEach((track) => {
-          peer.peer.addTrack(track, stream);
-        });
+        if (audioSenderRef.current) {
+          await audioSenderRef.current.replaceTrack(newTrack);
+        } else {
+          // Pass localStreamRef.current so it shares the ID with video
+          const sender = peer.peer.addTrack(newTrack, localStreamRef.current);
+          audioSenderRef.current = sender;
+        }
       }
+
+      const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
+      sendMediaState(hasVideo, true);
+
     } catch (err) {
       console.error("Audio error:", err);
     }
-  }, [clientAudioStream, remoteSocketId]);
+  }, [remoteSocketId, sendMediaState]);
 
   const handleNegoNeeded = useCallback(async () => {
     if (isMakingOffer.current) return;
     isMakingOffer.current = true;
-    const offer = await peer.getOffer();
-    socketRef.current?.emit("peer:nego:needed", { offer, to: remoteSocketId });
-    isMakingOffer.current = false;
-  }, [remoteSocketId, socketRef]);
+    try {
+      const offer = await peer.getOffer();
+      socketRef.current?.emit("peer:nego:needed", { offer, to: remoteSocketId });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      isMakingOffer.current = false;
+    }
+  }, [remoteSocketId]);
 
-  /* ---------------- use effects ---------------- */
+  /* ---------------- useEffects ---------------- */
 
-  // negotiation useffects
   useEffect(() => {
     peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
     return () => {
@@ -243,40 +337,56 @@ function App() {
     let socket = socketRef.current;
     if (!socket) {
       socket = io(SOCKET_URL, {
-        transports: ["websocket"], // important
+        transports: ["websocket"],
       });
+      socketRef.current = socket;
     }
 
-    socketRef.current = socket;
-
-    socketRef.current?.on("connect", () => {
-      console.log("✅ Socket connected:", socket.id);
+    const onConnect = () => {
+      console.log("✅ Socket connected:", socket?.id);
       setIsConnected(true);
-    });
-
-    socketRef.current?.on("disconnect", () => {
+    };
+    const onDisconnect = () => {
       console.log("❌ Socket disconnected");
       setIsConnected(false);
-    });
+    };
 
-    // 👇 THESE MUST BE OUTSIDE disconnect
-    socketRef.current?.on("room:join", handleJoinRoom);
-    socketRef.current?.on("user:joined", handleUserJoined);
-    socketRef.current?.on("incomming:call", handleIncommingCall);
-    socketRef.current?.on("call:accepted", handleCallAccepted);
-    socketRef.current?.on("peer:nego:needed", handleNegoNeedIncomming);
-    socketRef.current?.on("peer:nego:final", handleNegoNeedFinal);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("room:join", handleJoinRoom);
+    socket.on("user:joined", handleUserJoined);
+    socket.on("user:leave", handleUserLeft);
+    socket.on("incomming:call", handleIncommingCall);
+    socket.on("call:accepted", handleCallAccepted);
+    socket.on("peer:nego:needed", handleNegoNeedIncomming);
+    socket.on("peer:nego:final", handleNegoNeedFinal);
+    socket.on("media:state", handleRemoteMediaState); // Icon Sync
+
+    socket.on("ice:candidate", async ({ candidate }) => {
+      try {
+        await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error("Error adding ICE candidate:", err);
+      }
+    });
 
     socket.on("connect_error", (err) => {
       console.error("🔥 Connect error:", err.message);
     });
 
     return () => {
-      socketRef.current?.off("room:join", handleJoinRoom);
-      socketRef.current?.off("user:joined", handleUserJoined);
-      socketRef.current?.off("incomming:call", handleIncommingCall);
-      socketRef.current?.off("call:accepted", handleCallAccepted);
-      socketRef.current?.disconnect();
+      socket?.off("connect", onConnect);
+      socket?.off("disconnect", onDisconnect);
+      socket?.off("room:join", handleJoinRoom);
+      socket?.off("user:joined", handleUserJoined);
+      socket?.off("user:leave", handleUserLeft);
+      socket?.off("incomming:call", handleIncommingCall);
+      socket?.off("call:accepted", handleCallAccepted);
+      socket?.off("peer:nego:needed", handleNegoNeedIncomming);
+      socket?.off("peer:nego:final", handleNegoNeedFinal);
+      socket?.off("media:state", handleRemoteMediaState);
+      socket?.off("ice:candidate");
+      socket?.disconnect();
       socketRef.current = null;
     };
   }, [
@@ -286,9 +396,10 @@ function App() {
     handleUserJoined,
     handleCallAccepted,
     handleIncommingCall,
+    handleRemoteMediaState,
+    handleUserLeft
   ]);
 
-  //  ice candidtates useffect
   useEffect(() => {
     const onIceCandidate = (event: RTCPeerConnectionIceEvent) => {
       if (event.candidate && remoteSocketId) {
@@ -298,66 +409,22 @@ function App() {
         });
       }
     };
-
     peer.peer.onicecandidate = onIceCandidate;
-
     return () => {
       peer.peer.onicecandidate = null;
     };
   }, [remoteSocketId]);
 
-  // Add listener for incoming candidates:
-  useEffect(() => {
-    socketRef.current?.on("ice:candidate", async ({ candidate }) => {
-      try {
-        await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
-        console.log("Added ICE candidate", candidate);
-      } catch (err) {
-        console.error("Error adding ICE candidate:", err);
-      }
-    });
-
-    return () => {
-      socketRef.current?.off("ice:candidate");
-    };
-  }, []);
-
-  // useEffect for incoming tracks
+  // Track Handling: Simplified because we now send consistent streams
   useEffect(() => {
     const handleTrack = (event: RTCTrackEvent) => {
-      const [remoteStream] = event.streams;
-
-      // Usually one stream with video+audio, but let's be safe
-      if (remoteStream) {
-        console.log("Received remote stream!", remoteStream.getTracks());
-
-        // You can assign to one combined stream or separate
-        // Most common: one <video> for remote (video+audio)
-        // But since you have separate states → you can split
-
-        const videoTrack = remoteStream.getVideoTracks()[0];
-        const audioTrack = remoteStream.getAudioTracks()[0];
-
-        if (videoTrack) {
-          const videoStream = new MediaStream([videoTrack]);
-          setRemoteVideStream(videoStream);   
-        }
-
-        if (audioTrack) {
-          const audioStream = new MediaStream([audioTrack]);
-          setRemoteAudioStream(audioStream);
-        }
-
-        // ────────────────────────────────
-        // Simpler & recommended approach:
-        // Just use one remote stream for the <video> element
-        // ────────────────────────────────
-        // setRemoteStream(remoteStream);   // ← add this state instead
-      }
+      console.log("📥 Remote track received", event.track.kind);
+      // Since we use shared Stream IDs, event.streams[0] is usually stable.
+      // But we can ensure we update state correctly.
+      setRemoteStream(event.streams[0]); 
     };
 
     peer.peer.addEventListener("track", handleTrack);
-
     return () => {
       peer.peer.removeEventListener("track", handleTrack);
     };
@@ -410,14 +477,14 @@ function App() {
           {/* Local Client video  */}
           <div className="flex flex-col md:flex-row justify-center items-center gap-4 md:gap-8 w-full">
             <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150">
-              {clientVideStream ? (
+              {myStream && myStream.getVideoTracks().length > 0 ? (
                 <video
                   autoPlay
                   muted
                   playsInline
                   ref={(video) => {
-                    if (video && clientVideStream) {
-                      video.srcObject = clientVideStream;
+                    if (video && myStream) {
+                      video.srcObject = myStream;
                     }
                   }}
                   className="rounded-3xl w-full h-full object-cover"
@@ -434,7 +501,7 @@ function App() {
                   onClick={toggleClientVideo}
                   className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
                 >
-                  {clientVideStream ? (
+                  {myStream && myStream.getVideoTracks().length > 0 ? (
                     <IoVideocamOutline
                       className={`text-2xl 
                         text-green-400
@@ -452,7 +519,7 @@ function App() {
                   onClick={toggleClientAudio}
                   className={`p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer`}
                 >
-                  {clientAudioStream ? (
+                  {myStream && myStream.getAudioTracks().length > 0 ? (
                     <PiMicrophone
                       className={`text-2xl
                          text-green-400
@@ -468,17 +535,20 @@ function App() {
                 </button>
               </div>
             </div>
+            
             {/* Remote client */}
             <div className="relative w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150 overflow-hidden">
               {remoteSocketId ? (
                 <>
-                  {remoteVideStream ? (
+                  {remoteStream ? (
                     <video
                       autoPlay
                       playsInline
                       className="w-full h-full object-cover rounded-3xl"
                       ref={(video) => {
-                        if (video) video.srcObject = remoteVideStream;
+                        if (video && remoteStream) {
+                          video.srcObject = remoteStream;
+                        }
                       }}
                     />
                   ) : (
@@ -492,18 +562,17 @@ function App() {
                     </div>
                   )}
 
-                  {/* Status buttons – always at bottom center */}
+                  {/* Status buttons – Using Synced State */}
                   <div className="absolute bottom-0.5 md:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 sm:gap-4 z-10">
                     <button className="p-2.5 sm:p-3 rounded-full">
-                      {remoteVideStream ? (
+                      {remoteMediaState.video ? (
                         <IoVideocamOutline className="text-xl sm:text-2xl text-green-400" />
                       ) : (
                         <IoVideocamOffOutline className="text-xl sm:text-2xl text-red-400" />
                       )}
                     </button>
-
                     <button className="p-2.5 sm:p-3 rounded-full ">
-                      {remoteAudioStream ? (
+                      {remoteMediaState.audio ? (
                         <PiMicrophone className="text-xl sm:text-2xl text-green-400" />
                       ) : (
                         <PiMicrophoneSlash className="text-xl sm:text-2xl text-red-400" />
