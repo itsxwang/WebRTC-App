@@ -46,23 +46,23 @@ function App() {
         });
       }
     },
-    [remoteSocketId]
+    [remoteSocketId],
   );
 
   const syncLocalTracks = useCallback(() => {
     if (!peer.peer) return;
 
     const stream = localStreamRef.current;
-    
+
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack && !videoSenderRef.current) {
-        // If connection is new/reset, add the track
-        videoSenderRef.current = peer.peer.addTrack(videoTrack, stream);
+      // If connection is new/reset, add the track
+      videoSenderRef.current = peer.peer.addTrack(videoTrack, stream);
     }
 
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack && !audioSenderRef.current) {
-        audioSenderRef.current = peer.peer.addTrack(audioTrack, stream);
+      audioSenderRef.current = peer.peer.addTrack(audioTrack, stream);
     }
   }, []);
 
@@ -82,7 +82,7 @@ function App() {
     socket.emit("room:join", {
       roomId: newRoomId,
       user: userName,
-      mediaState: { video: hasVideo, audio: hasAudio }
+      mediaState: { video: hasVideo, audio: hasAudio },
     });
   }, [isConnected, roomId, userName]);
 
@@ -103,7 +103,7 @@ function App() {
         }
       }
     },
-    []
+    [],
   );
 
   // Triggered when WE leave the room
@@ -111,15 +111,15 @@ function App() {
     // Reset Senders but KEEP tracks alive in localStreamRef
     videoSenderRef.current = null;
     audioSenderRef.current = null;
-    
+
     setRemoteStream(null);
     setRemoteMediaState({ audio: false, video: false });
     setRemoteSocketId(null);
     setRemoteUserName(null);
-    
+
     // Kill the connection
-    peer.reset(); 
-    
+    peer.reset();
+
     setLocalMediaTrigger((prev) => prev + 1);
   }, []);
 
@@ -134,19 +134,19 @@ function App() {
   const joinNextRoom = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !isConnected || !roomId) return;
-    
-    cleanupMedia(); 
-    
+
+    cleanupMedia();
+
     const newRoomId = crypto.randomUUID();
     socket.emit("room:leave", roomId);
-    
+
     const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
     const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
 
-    socket.emit("room:join", { 
-        roomId: newRoomId, 
-        user: userName,
-        mediaState: { video: hasVideo, audio: hasAudio } 
+    socket.emit("room:join", {
+      roomId: newRoomId,
+      user: userName,
+      mediaState: { video: hasVideo, audio: hasAudio },
     });
     setRoomId(newRoomId);
   }, [isConnected, roomId, userName, cleanupMedia]);
@@ -166,31 +166,42 @@ function App() {
     audioSenderRef.current = null;
   }, []);
 
-  const handleCallUser = useCallback(async (remoteSocketId: string) => {
-    syncLocalTracks();
-    const offer = await peer.getOffer();
-    socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
-  }, [syncLocalTracks]);
+  const handleCallUser = useCallback(
+    async (remoteSocketId: string) => {
+      syncLocalTracks();
+      const offer = await peer.getOffer();
+      socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
+    },
+    [syncLocalTracks],
+  );
 
   const handleIncommingCall = useCallback(
     async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
       setRemoteSocketId(from);
-      syncLocalTracks(); 
+      syncLocalTracks();
       const ans = await peer.getAnswer(offer);
       socketRef.current?.emit("call:accepted", { to: from, ans });
     },
-    [syncLocalTracks]
+    [syncLocalTracks],
   );
 
   const handleCallAccepted = useCallback(
     ({ ans }: { ans: RTCSessionDescription }) => {
       peer.setLocalDescription(ans);
     },
-    []
+    [],
   );
 
   const handleUserJoined = useCallback(
-    ({ user, id, mediaState }: { user: string; id: string; mediaState?: { video: boolean; audio: boolean } }) => {
+    ({
+      user,
+      id,
+      mediaState,
+    }: {
+      user: string;
+      id: string;
+      mediaState?: { video: boolean; audio: boolean };
+    }) => {
       setRemoteUserName(user);
       setRemoteSocketId(id);
       if (mediaState) {
@@ -198,7 +209,7 @@ function App() {
       }
       handleCallUser(id);
     },
-    [handleCallUser]
+    [handleCallUser],
   );
 
   const handleNegoNeedIncomming = useCallback(
@@ -206,21 +217,21 @@ function App() {
       const ans = await peer.getAnswer(offer);
       socketRef.current?.emit("peer:nego:done", { to: from, ans });
     },
-    []
+    [],
   );
 
   const handleNegoNeedFinal = useCallback(
     async ({ ans }: { ans: RTCSessionDescription }) => {
       await peer.setLocalDescription(ans);
     },
-    []
+    [],
   );
 
   const handleRemoteMediaState = useCallback(
     ({ mediaState }: { mediaState: { video: boolean; audio: boolean } }) => {
       setRemoteMediaState(mediaState);
     },
-    []
+    [],
   );
 
   /* ---------------- Toggle Logic ---------------- */
@@ -245,17 +256,23 @@ function App() {
         });
         const newTrack = stream.getVideoTracks()[0];
         localStreamRef.current.addTrack(newTrack);
-        
+
         // If connection is active/stable, attach immediately
-        if (peer.peer && peer.peer.signalingState !== 'closed') {
-             if (videoSenderRef.current) {
-                await videoSenderRef.current.replaceTrack(newTrack);
-             } else {
-                videoSenderRef.current = peer.peer.addTrack(newTrack, localStreamRef.current);
-             }
+        if (peer.peer && peer.peer.signalingState !== "closed") {
+          if (videoSenderRef.current) {
+            await videoSenderRef.current.replaceTrack(newTrack);
+          } else {
+            videoSenderRef.current = peer.peer.addTrack(
+              newTrack,
+              localStreamRef.current,
+            );
+          }
         }
-        
-        sendMediaState(true, localStreamRef.current.getAudioTracks().length > 0);
+
+        sendMediaState(
+          true,
+          localStreamRef.current.getAudioTracks().length > 0,
+        );
       } catch (err) {
         console.error(err);
       }
@@ -283,16 +300,22 @@ function App() {
         });
         const newTrack = stream.getAudioTracks()[0];
         localStreamRef.current.addTrack(newTrack);
-        
-        if (peer.peer && peer.peer.signalingState !== 'closed') {
-            if (audioSenderRef.current) {
-                await audioSenderRef.current.replaceTrack(newTrack);
-            } else {
-                audioSenderRef.current = peer.peer.addTrack(newTrack, localStreamRef.current);
-            }
+
+        if (peer.peer && peer.peer.signalingState !== "closed") {
+          if (audioSenderRef.current) {
+            await audioSenderRef.current.replaceTrack(newTrack);
+          } else {
+            audioSenderRef.current = peer.peer.addTrack(
+              newTrack,
+              localStreamRef.current,
+            );
+          }
         }
-        
-        sendMediaState(localStreamRef.current.getVideoTracks().length > 0, true);
+
+        sendMediaState(
+          localStreamRef.current.getVideoTracks().length > 0,
+          true,
+        );
       } catch (err) {
         console.error(err);
       }
@@ -318,11 +341,11 @@ function App() {
 
   // Re-bind negotiation listener whenever 'started' or peer resets
   useEffect(() => {
-    if(!peer.peer) return;
+    if (!peer.peer) return;
     peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
     return () => {
-        peer.peer?.removeEventListener("negotiationneeded", handleNegoNeeded);
-    }
+      peer.peer?.removeEventListener("negotiationneeded", handleNegoNeeded);
+    };
   }, [handleNegoNeeded, started, remoteSocketId]); // remoteSocketId dependency helps re-bind on new call
 
   useEffect(() => {
@@ -344,8 +367,8 @@ function App() {
     socket.on("media:state", handleRemoteMediaState);
     socket.on("ice:candidate", async ({ candidate }) => {
       try {
-        if(peer.peer) {
-            await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
+        if (peer.peer) {
+          await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
         }
       } catch (e) {
         console.error(e);
@@ -368,7 +391,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if(!peer.peer) return;
+    if (!peer.peer) return;
     peer.peer.onicecandidate = (event) => {
       if (event.candidate && remoteSocketId) {
         socketRef.current?.emit("ice:candidate", {
@@ -380,7 +403,7 @@ function App() {
   }, [remoteSocketId, started]);
 
   useEffect(() => {
-    if(!peer.peer) return;
+    if (!peer.peer) return;
     const handleTrack = (event: RTCTrackEvent) => {
       setRemoteStream(event.streams[0]);
     };
@@ -421,7 +444,9 @@ function App() {
               onChange={(e) => setUserName(e.target.value)}
               placeholder="Enter your name..."
               className={`${
-                started ? "cursor-auto bg-gray-700/50 border-none" : "cursor-auto"
+                started
+                  ? "cursor-auto bg-gray-700/50 border-none"
+                  : "cursor-auto"
               } text-center w-full px-5 py-3 rounded-2xl border-2 border-cyan-400/60 backdrop-blur-md text-white text-lg font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
               maxLength={32}
               autoComplete="off"
@@ -430,7 +455,7 @@ function App() {
 
           <div className="flex flex-col md:flex-row justify-center items-center gap-4 md:gap-8 w-full">
             {/* Local Video Section */}
-            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150">
+            <div className="w-full max-w-sm md:max-w-2xl aspect-video bg-linear-to-br from-blue-900/60 via-slate-800/80 to-cyan-800/60 rounded-3xl shadow-2xl border border-cyan-400/30 hover:border-blue-400/70 transition-all duration-300 hover:shadow-blue-400/30 backdrop-blur-md backdrop-saturate-150 relative">
               {hasVideo ? (
                 <video
                   autoPlay
@@ -446,10 +471,10 @@ function App() {
                   <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
                 </div>
               )}
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-4">
+              <div className="absolute bottom-0.5 md:bottom-1 left-1/2 transform -translate-x-1/2 flex gap-4 z-10">
                 <button
                   onClick={toggleClientVideo}
-                  className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
+                  className={`p-1 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer`}
                 >
                   {hasVideo ? (
                     <IoVideocamOutline className="text-2xl text-green-400" />
@@ -459,7 +484,7 @@ function App() {
                 </button>
                 <button
                   onClick={toggleClientAudio}
-                  className="p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
+                  className={`p-3 rounded-full hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer`}
                 >
                   {hasAudio ? (
                     <PiMicrophone className="text-2xl text-green-400" />
@@ -488,7 +513,7 @@ function App() {
                     <video
                       autoPlay
                       playsInline
-                      muted 
+                      muted
                       className="w-full h-full object-cover rounded-3xl"
                       ref={(video) => {
                         if (video) video.srcObject = remoteStream;
@@ -496,16 +521,19 @@ function App() {
                     />
                   ) : (
                     <div className="flex flex-col justify-center items-center h-full text-center p-4">
+                      {/* FIX 1: Icon is now alone in flex container, ensuring perfect alignment with local peer */}
                       <IoVideocamOffOutline className="text-6xl md:text-8xl text-gray-400 mb-4 animate-pulse" />
+
+                      {/* FIX 2: Name moved to absolute top to avoid overlapping buttons at bottom */}
                       {remoteUserName && (
-                        <p className="text-gray-300 text-lg md:text-xl font-medium font-sans mt-2">
+                        <p className="absolute bottom-10 md:bottom-10 text-gray-300 text-lg md:text-xl font-medium font-sans drop-shadow-md  px-4 py-1 rounded-full ">
                           {remoteUserName}
                         </p>
                       )}
                     </div>
                   )}
 
-                  <div className="absolute bottom-0.5 md:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 sm:gap-4 z-10">
+                  <div className="absolute bottom-0.5 md:bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-3 sm:gap-4 z-10">
                     <button className="p-2.5 sm:p-3 rounded-full">
                       {remoteMediaState.video ? (
                         <IoVideocamOutline className="text-xl sm:text-2xl text-green-400" />
