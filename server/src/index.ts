@@ -24,10 +24,17 @@ const io = new Server(server, {
 });
 
 const socketToUser = new Map<string, string>();
-const socketToMediaState = new Map<string, { video: boolean; audio: boolean }>();
+const socketToMediaState = new Map<
+  string,
+  { video: boolean; audio: boolean }
+>();
 
 io.on("connection", (socket: Socket) => {
   console.log(`User connected: ${socket.id}`);
+
+  io.emit("users:change", {
+    total: io.engine.clientsCount,
+  });
 
   socketToUser.set(socket.id, "Anonymous");
   // Initialize with false/false
@@ -35,14 +42,22 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "room:join",
-    ({ roomId, user, mediaState }: { roomId: string; user: string; mediaState: { video: boolean; audio: boolean } }) => {
+    ({
+      roomId,
+      user,
+      mediaState,
+    }: {
+      roomId: string;
+      user: string;
+      mediaState: { video: boolean; audio: boolean };
+    }) => {
       // check if in room 2 peers already their, if yes -> then emit - server:err
       if (io.sockets.adapter.rooms.get(roomId)?.size === 2) {
         socket.emit("server:err", {
           message: "This Room is Already FULL!",
         });
         return;
-      }  
+      }
 
       let existingUser: string | undefined = Array.from(
         io.sockets.adapter.rooms.get(roomId) || [],
@@ -51,19 +66,21 @@ io.on("connection", (socket: Socket) => {
       let existingUserName: string | undefined = socketToUser.get(
         existingUser || "",
       );
-      
-      let existingUserMediaState: { video: boolean; audio: boolean } | undefined = undefined;
+
+      let existingUserMediaState:
+        | { video: boolean; audio: boolean }
+        | undefined = undefined;
       if (existingUser) {
         existingUserMediaState = socketToMediaState.get(existingUser);
       }
 
       socketToUser.set(socket.id, user);
-      
+
       // Update the joiner's state immediately
       if (mediaState) {
         socketToMediaState.set(socket.id, mediaState);
       }
-      
+
       socket.join(roomId);
 
       console.log(`${user} joined room: ${roomId}`);
@@ -74,7 +91,7 @@ io.on("connection", (socket: Socket) => {
         user,
         existingUser,
         existingUserName,
-        existingUserMediaState, 
+        existingUserMediaState,
       });
 
       // Notify the room (existing user) about the new guy + send NEW GUY'S media state
@@ -82,7 +99,7 @@ io.on("connection", (socket: Socket) => {
         user,
         id: socket.id,
         roomId,
-        mediaState: mediaState || { video: false, audio: false }
+        mediaState: mediaState || { video: false, audio: false },
       });
     },
   );
@@ -116,7 +133,7 @@ io.on("connection", (socket: Socket) => {
   // 🔥 FIXED: Always update server state, even if 'to' is null (User is alone)
   socket.on("media:state", ({ to, mediaState }) => {
     socketToMediaState.set(socket.id, mediaState);
-    
+
     // Only forward to remote peer if they exist
     if (to) {
       io.to(to).emit("media:state", { from: socket.id, mediaState });
@@ -124,6 +141,9 @@ io.on("connection", (socket: Socket) => {
   });
 
   socket.on("disconnecting", () => {
+    io.emit("users:change", {
+      total: io.engine.clientsCount,
+    });
     const rooms = Array.from(socket.rooms);
     rooms.forEach((room) => {
       if (room !== socket.id) {

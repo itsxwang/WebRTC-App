@@ -3,6 +3,7 @@ import { io, Socket } from "socket.io-client";
 import { PiMicrophone, PiMicrophoneSlash } from "react-icons/pi";
 import { IoVideocamOutline, IoVideocamOffOutline } from "react-icons/io5";
 import peer from "./service/peer";
+import { MdOutlinePersonOutline } from "react-icons/md";
 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
@@ -12,6 +13,7 @@ function App() {
 
   const socketRef = useRef<Socket | null>(null);
 
+  const [totalUsers, setTotalUsers] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
   const [userName, setUserName] = useState("Anonymous");
   const [roomId, setRoomId] = useState<string | null>(null);
@@ -75,6 +77,10 @@ function App() {
     } catch (err) {
       console.error(err);
     }
+  }, []);
+
+  const handleUsersChange = useCallback(({ total }: { total: number }) => {
+    setTotalUsers(total);
   }, []);
 
   // Handle Server Error (Room Full)
@@ -440,9 +446,35 @@ function App() {
   const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
   const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
 
+  // listen for total users changes
+  useEffect(() => {
+    socketRef.current?.on("users:change", handleUsersChange);
+    return () => {
+      socketRef.current?.off("users:change", handleUsersChange);
+    };
+  }, [handleUsersChange]);
+
   return (
     <>
       <div className="flex min-h-screen flex-col bg-linear-to-br from-blue-950 via-slate-900 to-cyan-900 text-white relative overflow-hidden">
+        <div className="absolute top-3 right-3 sm:top-5 sm:right-6 px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl bg-slate-900/40 backdrop-blur-md border border-cyan-400/30 text-white shadow-xl shadow-cyan-900/20 transition-all duration-300 group z-50">
+          <div className="flex flex-col items-center justify-center">
+            {/* The Number */}
+            <div className="text-sm sm:text-lg font-mono font-bold leading-none bg-linear-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+              {totalUsers}
+            </div>
+
+            {/* The Icon - Always below */}
+            <div className="flex items-center gap-1 mt-0.5">
+              <MdOutlinePersonOutline className="text-cyan-400 text-xs sm:text-sm" />
+              <span className="hidden sm:inline text-[10px] uppercase tracking-widest text-cyan-200/60 font-bold">
+                Live
+              </span>
+              {/* Little green live indicator dot */}
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.6)]"></span>
+            </div>
+          </div>
+        </div>
         <div className="absolute -top-32 -left-32 w-96 h-96 bg-linear-to-br from-blue-500/30 via-cyan-400/20 to-transparent rounded-full blur-3xl z-0"></div>
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-linear-to-tr from-cyan-400/30 via-blue-500/20 to-transparent rounded-full blur-2xl z-0"></div>
 
@@ -626,7 +658,10 @@ function App() {
               : "── Enter Room ID (Optional) ──"}
           </label>
           {started ? (
-            <button onClick={()=>handleCopyRoomId(roomId || "")} className="bg-gray-700/50 border-none text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none transition-all duration-200 active:scale-75">
+            <button
+              onClick={() => handleCopyRoomId(roomId || "")}
+              className="bg-gray-700/50 border-none text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none transition-all duration-200 active:scale-75"
+            >
               {roomId}
             </button>
           ) : (

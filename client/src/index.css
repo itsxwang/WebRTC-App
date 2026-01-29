@@ -42,11 +42,3 @@
     padding-bottom: 0;
   }
 }
-
-/* Optional: Extra breathing room for very small phones */
-
-@media (max-width: 415px) {
-  .toggleButtons {
-    /* margin-top: -4rem; */
-  }
-}
