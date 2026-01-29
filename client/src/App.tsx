@@ -33,6 +33,7 @@ function App() {
 
   const [remoteSocketId, setRemoteSocketId] = useState<string | null>(null);
   const [remoteUserName, setRemoteUserName] = useState<string | null>(null);
+  const [serverErrorMsg, setServerErrorMsg] = useState<string | null>(null);
   const isMakingOffer = useRef(false);
 
   /* ---------------- Helpers ---------------- */
@@ -68,9 +69,19 @@ function App() {
 
   /* ---------------- Callbacks ---------------- */
 
+  // Handle Server Error (Room Full)
+  const handleServerErr = useCallback(({ message }: { message: string }) => {
+    setServerErrorMsg(message);
+    setStarted(false); // Reset UI back to "Start"
+  }, []);
+
   const joinRoom = useCallback(async () => {
     const socket = socketRef.current;
     if (!socket || !isConnected) return;
+
+    // Clear previous errors
+    setServerErrorMsg(null);
+
     const newRoomId = roomId?.trim() || crypto.randomUUID();
 
     setRoomId(newRoomId);
@@ -95,9 +106,11 @@ function App() {
       existingUserMediaState?: { video: boolean; audio: boolean };
     }) => {
       const { existingUser, existingUserName, existingUserMediaState } = data;
+
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
+
         if (existingUserMediaState) {
           setRemoteMediaState(existingUserMediaState);
         }
@@ -134,6 +147,9 @@ function App() {
   const joinNextRoom = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !isConnected || !roomId) return;
+
+    // Clear previous errors
+    setServerErrorMsg(null);
 
     cleanupMedia();
 
@@ -365,6 +381,7 @@ function App() {
     socket.on("peer:nego:needed", handleNegoNeedIncomming);
     socket.on("peer:nego:final", handleNegoNeedFinal);
     socket.on("media:state", handleRemoteMediaState);
+    socket.on("server:err", handleServerErr);
     socket.on("ice:candidate", async ({ candidate }) => {
       try {
         if (peer.peer) {
@@ -388,6 +405,7 @@ function App() {
     handleIncommingCall,
     handleRemoteMediaState,
     handleUserLeft,
+    handleServerErr,
   ]);
 
   useEffect(() => {
@@ -582,6 +600,13 @@ function App() {
         </div>
 
         <div className="room-id-container">
+          {serverErrorMsg && (
+            <div className="mb-4 text-center">
+              <span className="inline-block px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200 font-bold backdrop-blur-md animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]">
+                ⚠️ {serverErrorMsg}
+              </span>
+            </div>
+          )}
           <label
             htmlFor="room-id"
             className={`${
@@ -595,7 +620,12 @@ function App() {
             id="room-id"
             type="text"
             value={roomId || ""}
-            onChange={(e) => setRoomId(e.target.value)}
+            onChange={(e) => {
+              if (serverErrorMsg) {
+                setServerErrorMsg(null);
+              }
+              setRoomId(e.target.value);
+            }}
             placeholder="Room ID"
             className={`${
               started ? "bg-gray-700/50 border-none" : ""

@@ -36,6 +36,14 @@ io.on("connection", (socket: Socket) => {
   socket.on(
     "room:join",
     ({ roomId, user, mediaState }: { roomId: string; user: string; mediaState: { video: boolean; audio: boolean } }) => {
+      // check if in room 2 peers already their, if yes -> then emit - server:err
+      if (io.sockets.adapter.rooms.get(roomId)?.size === 2) {
+        socket.emit("server:err", {
+          message: "This Room is Already FULL!",
+        });
+        return;
+      }  
+
       let existingUser: string | undefined = Array.from(
         io.sockets.adapter.rooms.get(roomId) || [],
       ).pop();
