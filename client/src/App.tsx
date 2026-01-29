@@ -69,6 +69,14 @@ function App() {
 
   /* ---------------- Callbacks ---------------- */
 
+  const handleCopyRoomId = useCallback(async (roomId: string) => {
+    try {
+      await navigator.clipboard.writeText(roomId);
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
   // Handle Server Error (Room Full)
   const handleServerErr = useCallback(({ message }: { message: string }) => {
     setServerErrorMsg(message);
@@ -610,29 +618,35 @@ function App() {
           <label
             htmlFor="room-id"
             className={`${
-              started ? "opacity-50" : "block"
+              started ? "animate-pulse" : "block"
             } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
           >
-            ── Enter Room ID (Optional) ──
+            {started
+              ? "── Click on ID Input to COPY ──"
+              : "── Enter Room ID (Optional) ──"}
           </label>
-          <input
-            disabled={started}
-            id="room-id"
-            type="text"
-            value={roomId || ""}
-            onChange={(e) => {
-              if (serverErrorMsg) {
-                setServerErrorMsg(null);
-              }
-              setRoomId(e.target.value);
-            }}
-            placeholder="Room ID"
-            className={`${
-              started ? "bg-gray-700/50 border-none" : ""
-            } text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
-            maxLength={36}
-            autoComplete="off"
-          />
+          {started ? (
+            <button onClick={()=>handleCopyRoomId(roomId || "")} className="bg-gray-700/50 border-none text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none transition-all duration-200 active:scale-75">
+              {roomId}
+            </button>
+          ) : (
+            <input
+              disabled={started}
+              id="room-id"
+              type="text"
+              value={roomId || ""}
+              onChange={(e) => {
+                if (serverErrorMsg) {
+                  setServerErrorMsg(null);
+                }
+                setRoomId(e.target.value);
+              }}
+              placeholder="Room ID"
+              className={`text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
+              maxLength={36}
+              autoComplete="off"
+            />
+          )}
         </div>
       </div>
     </>
