@@ -18,6 +18,7 @@ function App() {
   const [userName, setUserName] = useState("Anonymous");
   const [roomId, setRoomId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const [findingRoom, setFindingRoom] = useState(false);
 
   // Local Media logic
   const localStreamRef = useRef<MediaStream>(new MediaStream());
@@ -96,24 +97,31 @@ function App() {
     // Clear previous errors
     setServerErrorMsg(null);
 
-    const newRoomId = roomId?.trim() || crypto.randomUUID();
-
-    setRoomId(newRoomId);
-    setStarted(true);
-
     const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
     const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
 
+    if (!roomId) {
+      localStorage.setItem("randomatch", "true");
+    }
+
     socket.emit("room:join", {
-      roomId: newRoomId,
+      roomId: roomId ? roomId.trim() : null,
+      ignoreRooms: JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
       user: userName,
       mediaState: { video: hasVideo, audio: hasAudio },
     });
+    setFindingRoom(true);
+
+    if (roomId) {
+      console.log("jhe", roomId);
+      setRoomId(roomId);
+    }
+    setStarted(true);
   }, [isConnected, roomId, userName]);
 
   const handleJoinRoom = useCallback(
     (data: {
-      roomId: string;
+      roomId: string | null;
       user: string;
       existingUser: string;
       existingUserName: string;
@@ -121,6 +129,11 @@ function App() {
     }) => {
       const { existingUser, existingUserName, existingUserMediaState } = data;
 
+      setFindingRoom(false);
+      if (data.roomId) {
+        console.log("Joined Room:", data.roomId);
+        setRoomId(data.roomId);
+      }
       if (existingUser) {
         setRemoteSocketId(existingUser);
         setRemoteUserName(existingUserName);
@@ -153,8 +166,17 @@ function App() {
   const leaveRoom = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || !roomId) return;
-    socket.emit("room:leave", roomId);
-    setStarted(false);
+    socket.emit("room:leave", {
+      roomId,
+      randomMatch: localStorage.getItem("randomatch"),
+    });
+
+    if (localStorage.getItem("randomatch")) {
+      setStarted(false);
+      setRoomId(null);
+      localStorage.removeItem("randomatch");
+    }
+
     cleanupMedia();
   }, [roomId, cleanupMedia]);
 
@@ -168,13 +190,28 @@ function App() {
     cleanupMedia();
 
     const newRoomId = crypto.randomUUID();
-    socket.emit("room:leave", roomId);
+    socket.emit("room:leave", { roomId, randomMatch: true });
 
     const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
     const hasAudio = localStreamRef.current.getAudioTracks().length > 0;
 
+    localStorage.setItem("randomatch", "true");
+
+    console.log([
+      ...JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
+      roomId,
+    ]);
+    localStorage.setItem(
+      "ignoreRooms",
+      JSON.stringify([
+        ...JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
+        roomId,
+      ]),
+    );
+
     socket.emit("room:join", {
-      roomId: newRoomId,
+      roomId: null,
+      ignoreRooms: JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
       user: userName,
       mediaState: { video: hasVideo, audio: hasAudio },
     });
@@ -369,6 +406,18 @@ function App() {
 
   /* ---------------- Effects ---------------- */
 
+  // ignoreRooms reset useffect
+  useEffect(() => {
+    function resetIgnoreRooms() {
+      localStorage.setItem("ignoreRooms", JSON.stringify([]));
+    }
+    const resetInterval = setInterval(resetIgnoreRooms, 120000);
+
+    return () => {
+      clearInterval(resetInterval);
+    };
+  });
+
   // Re-bind negotiation listener whenever 'started' or peer resets
   useEffect(() => {
     if (!peer.peer) return;
@@ -378,15 +427,29 @@ function App() {
     };
   }, [handleNegoNeeded, started, remoteSocketId]); // remoteSocketId dependency helps re-bind on new call
 
+  // Effect 1: Initialize Connection (Run Only Once)
   useEffect(() => {
-    let socket = socketRef.current;
-    if (!socket) {
-      socket = io(SOCKET_URL, { transports: ["websocket"] });
-      socketRef.current = socket;
-    }
+    // 1. Create connection
+    const socket = io(SOCKET_URL, { transports: ["websocket"] });
+    socketRef.current = socket;
 
+    // 2. Set basic connection state
     socket.on("connect", () => setIsConnected(true));
     socket.on("disconnect", () => setIsConnected(false));
+
+    // 3. Cleanup on unmount only
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, []); // <--- Empty Array means "Never disconnect unless I close the tab"
+
+  // Effect 2: Bind Event Listeners (Runs when handlers update)
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    // Attach Listeners
     socket.on("room:join", handleJoinRoom);
     socket.on("user:joined", handleUserJoined);
     socket.on("user:leave", handleUserLeft);
@@ -406,19 +469,29 @@ function App() {
       }
     });
 
+    // Remove Listeners (But keep socket connected!)
     return () => {
-      socket?.disconnect();
-      socketRef.current = null;
+      socket.off("room:join", handleJoinRoom);
+      socket.off("user:joined", handleUserJoined);
+      socket.off("user:leave", handleUserLeft);
+      socket.off("incomming:call", handleIncommingCall);
+      socket.off("call:accepted", handleCallAccepted);
+      socket.off("peer:nego:needed", handleNegoNeedIncomming);
+      socket.off("peer:nego:final", handleNegoNeedFinal);
+      socket.off("media:state", handleRemoteMediaState);
+      socket.off("server:err", handleServerErr);
+      socket.off("ice:candidate");
     };
   }, [
-    handleNegoNeedFinal,
-    handleNegoNeedIncomming,
+    // These dependencies trigger a re-bind, but NOT a re-connect
     handleJoinRoom,
     handleUserJoined,
-    handleCallAccepted,
-    handleIncommingCall,
-    handleRemoteMediaState,
     handleUserLeft,
+    handleIncommingCall,
+    handleCallAccepted,
+    handleNegoNeedIncomming,
+    handleNegoNeedFinal,
+    handleRemoteMediaState,
     handleServerErr,
   ]);
 
@@ -454,6 +527,14 @@ function App() {
     };
   }, [handleUsersChange]);
 
+  let roomIdLabel = "";
+  if (findingRoom) {
+    roomIdLabel = "Finding Room...";
+  } else if (started) {
+    roomIdLabel = "── Click on ID Input to COPY ──";
+  } else {
+    roomIdLabel = "── Leave Room ID Blank for Random match ──";
+  }
   return (
     <>
       <div className="flex min-h-screen flex-col bg-linear-to-br from-blue-950 via-slate-900 to-cyan-900 text-white relative overflow-hidden">
@@ -653,14 +734,14 @@ function App() {
               started ? "animate-pulse" : "block"
             } text-cyan-300 text-sm font-semibold mb-2 drop-shadow-md transition-all duration-200`}
           >
-            {started
-              ? "── Click on ID Input to COPY ──"
-              : "── Enter Room ID (Optional) ──"}
+            {roomIdLabel}
           </label>
           {started ? (
             <button
-              onClick={() => handleCopyRoomId(roomId || "")}
-              className="bg-gray-700/50 border-none text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none transition-all duration-200 active:scale-75"
+              onClick={() => {
+                handleCopyRoomId(roomId || "");
+              }}
+              className="truncate bg-gray-700/50 border-none text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none transition-all duration-200 active:scale-75"
             >
               {roomId}
             </button>
@@ -676,7 +757,7 @@ function App() {
                 }
                 setRoomId(e.target.value);
               }}
-              placeholder="Room ID"
+              placeholder="Custom Room ID"
               className={`text-center w-56 px-4 py-2 rounded-lg border-2 border-cyan-400/60 backdrop-blur-md text-white text-sm font-mono shadow-lg focus:outline-none focus:border-blue-400 transition-all duration-200 placeholder:text-cyan-200/70`}
               maxLength={36}
               autoComplete="off"

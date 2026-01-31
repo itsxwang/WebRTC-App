@@ -44,11 +44,15 @@ class PeerService {
       // 🔥 FIX: Ensure we offer "receive" capabilities for Audio & Video
       // even if we (the caller) don't have a track attached yet.
       // This ensures the other peer can send us their video if they have it.
-      
+
       const transceivers = this.peer.getTransceivers();
-      
-      const hasVideo = transceivers.some(t => t.receiver.track.kind === 'video');
-      const hasAudio = transceivers.some(t => t.receiver.track.kind === 'audio');
+
+      const hasVideo = transceivers.some(
+        (t) => t.receiver.track.kind === "video",
+      );
+      const hasAudio = transceivers.some(
+        (t) => t.receiver.track.kind === "audio",
+      );
 
       if (!hasVideo) {
         this.peer.addTransceiver("video", { direction: "recvonly" });
