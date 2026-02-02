@@ -55,42 +55,39 @@ io.on("connection", (socket: Socket) => {
       user: string;
       mediaState: { video: boolean; audio: boolean };
     }) => {
-      // check if the room id is null (means user click on `next` button or click on `join` without entering room id
       let finalRoomId = roomId;
-      console.log("waitingRooms", waitingRooms);
+
+      // 1. Logic for Random Matching (User didn't provide a Room ID)
       if (!finalRoomId) {
-        // a first peer in the queue waiting for some other random peer
-
         let waitingRoomId: string | undefined = undefined;
-        if (ignoreRooms.length) {
-          waitingRoomId = Array.from(waitingRooms).filter(
-            (roomId) => !ignoreRooms.includes(roomId),
-          )[0];
-          // remove that room from set
-          waitingRooms.delete(waitingRooms.values().next().value!);
 
-          // remove room from waitingRooms if the room is empty
+        // Convert Set to Array once to filter it
+        const availableRooms = Array.from(waitingRooms);
 
-          let lastRoom = ignoreRooms[ignoreRooms.length - 1];
-          if (!io.sockets.adapter.rooms.get(lastRoom)?.size) {
-            console.log("pine remob");
-            waitingRooms.delete(lastRoom);
-          }
+        // Find the first room that is NOT in the ignore list
+        if (ignoreRooms && ignoreRooms.length > 0) {
+          waitingRoomId = availableRooms.find(
+            (id) => !ignoreRooms.includes(id),
+          );
         } else {
-          waitingRoomId = waitingRooms.values().next().value;
-          waitingRooms.delete(waitingRooms.values().next().value!);
+          // If no ignore list, just take the first available room
+          waitingRoomId = availableRooms[0];
         }
+
         if (waitingRoomId) {
-          // FIFO queue
+          // Join the existing waiting room
           finalRoomId = waitingRoomId;
+          // 🔥 FIX: Remove the SPECIFIC room we joined, not the first one blindly
+          waitingRooms.delete(waitingRoomId);
+          console.log("removed from waitingRooms", waitingRooms);
         } else {
-          // give user some room with random room id, and add them in waiting list to join some user into their room
+          // Create a new room
           finalRoomId = randomBytes(15).toString("hex");
           waitingRooms.add(finalRoomId);
         }
       }
 
-      // check if in room 2 peers already their, if yes -> then emit - server:err
+      // 2. Check for Full Room
       if (io.sockets.adapter.rooms.get(finalRoomId)?.size === 2) {
         socket.emit("server:err", {
           message: "This Room is Already FULL!",
@@ -98,8 +95,9 @@ io.on("connection", (socket: Socket) => {
         return;
       }
 
+      // 3. Gather Existing User Data
       let existingUser: string | undefined = Array.from(
-        io.sockets.adapter.rooms.get(finalRoomId) || [],
+        io.sockets.adapter.rooms.get(finalRoomId!) || [],
       ).pop();
 
       let existingUserName: string | undefined = socketToUser.get(
@@ -113,29 +111,29 @@ io.on("connection", (socket: Socket) => {
         existingUserMediaState = socketToMediaState.get(existingUser);
       }
 
+      // 4. Update State
       socketToUser.set(socket.id, user);
-
-      // Update the joiner's state immediately
       if (mediaState) {
         socketToMediaState.set(socket.id, mediaState);
       }
 
-      socket.join(finalRoomId);
-      console.log("end----", waitingRooms);
+      socket.join(finalRoomId!);
 
       console.log(`${user} joined room: ${finalRoomId}`);
-      // Send existing user details + THEIR media state to the joiner
-      //* we sending roomId null, if frontend send room id null othwerwise `finalRoomId`, so user can set his room id given from server to their frontend
+      console.log(waitingRooms,"pineapple")
+
+      // 5. Send Response
+      // 🔥 FIX: Always send finalRoomId. The frontend needs it to update state correctly.
       socket.emit("room:join", {
-        roomId: roomId ? null : finalRoomId,
+        roomId: finalRoomId,
         user,
         existingUser,
         existingUserName,
         existingUserMediaState,
       });
 
-      // Notify the room (existing user) about the new guy + send NEW GUY'S media state
-      socket.to(finalRoomId).emit("user:joined", {
+      // 6. Notify the Room
+      socket.to(finalRoomId!).emit("user:joined", {
         user,
         id: socket.id,
         roomId: finalRoomId,
@@ -145,16 +143,26 @@ io.on("connection", (socket: Socket) => {
   );
 
   socket.on("room:leave", ({ randomMatch, roomId }) => {
-    if (io.sockets.adapter.rooms.get(roomId)?.size == 1) {
-      console.log("removed from waitingRooms");
+    // Check the size BEFORE leaving
+    const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+
+    socket.leave(roomId);
+
+    // Logic:
+    // If roomSize was 1 (just me), it is now empty -> Remove from queue.
+    // If roomSize was 2 (me + stranger), it now has 1 person -> Add to queue (so they can find a match).
+
+    if (roomSize === 1) {
       waitingRooms.delete(roomId);
-    } else {
+    } else if (roomSize === 2) {
+      // If it was a random match room, put it back in the queue for the remaining user
       if (randomMatch) {
+        // Safety check
         waitingRooms.add(roomId);
       }
     }
+    console.log(waitingRooms,"pineapple")
 
-    socket.leave(roomId);
     io.to(roomId).emit("user:leave", {});
     console.log(`${socket.id} left ${roomId}`);
   });
@@ -194,19 +202,25 @@ io.on("connection", (socket: Socket) => {
       total: io.engine.clientsCount,
     });
 
-    // cleanup
     socketToUser.delete(socket.id);
 
     const rooms = Array.from(socket.rooms);
     rooms.forEach((room) => {
       if (room !== socket.id) {
+        const roomSize = io.sockets.adapter.rooms.get(room)?.size || 0;
+
         socket.to(room).emit("user:leave", {});
-        // if this user only in the room, remove from waitingRooms
-        if (io.sockets.adapter.rooms.get(room)?.size == 1) {
-          console.log("removed from waitingRooms");
+
+        // If I was the only one in the room (size 1) and I disconnect -> Room is now empty -> Remove from queue
+        // If there were 2 people (size 2) and I disconnect -> Room has 1 person -> Add to queue
+        if (roomSize === 1) {
           waitingRooms.delete(room);
+        } else if (roomSize === 2) {
+          waitingRooms.add(room);
         }
       }
+      console.log(waitingRooms,"pineapple")
+
     });
   });
 

@@ -8,6 +8,10 @@ import { MdOutlinePersonOutline } from "react-icons/md";
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3000";
 
+interface IgnoredRoom {
+  id: string;
+  timestamp: number;
+}
 function App() {
   /* ---------------- States ---------------- */
 
@@ -40,6 +44,32 @@ function App() {
   const isMakingOffer = useRef(false);
 
   /* ---------------- Helpers ---------------- */
+
+  const getValidIgnoredRooms = useCallback(() => {
+    const raw = localStorage.getItem("ignoreRooms");
+    const parsed: IgnoredRoom[] = raw ? JSON.parse(raw) : [];
+    const now = Date.now();
+
+    // Keep rooms that are less than 10 seconds old (10000ms)
+    // ! Make it 300000 in real
+    const valid = parsed.filter((item) => now - item.timestamp < 10000);
+
+    // Update storage with only valid rooms
+    localStorage.setItem("ignoreRooms", JSON.stringify(valid));
+
+    // Return just the IDs for the server
+    return valid.map((item) => item.id);
+  }, []);
+
+  const addToIgnoreList = useCallback((idToIgnore: string) => {
+    const raw = localStorage.getItem("ignoreRooms");
+    const parsed: IgnoredRoom[] = raw ? JSON.parse(raw) : [];
+
+    // Add new room with current timestamp
+    const updated = [...parsed, { id: idToIgnore, timestamp: Date.now() }];
+
+    localStorage.setItem("ignoreRooms", JSON.stringify(updated));
+  }, []);
 
   const sendMediaState = useCallback(
     (videoEnabled: boolean, audioEnabled: boolean) => {
@@ -104,20 +134,21 @@ function App() {
       localStorage.setItem("randomatch", "true");
     }
 
+    const ignoreList = getValidIgnoredRooms();
+
     socket.emit("room:join", {
       roomId: roomId ? roomId.trim() : null,
-      ignoreRooms: JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
+      ignoreRooms: ignoreList,
       user: userName,
       mediaState: { video: hasVideo, audio: hasAudio },
     });
     setFindingRoom(true);
 
     if (roomId) {
-      console.log("jhe", roomId);
       setRoomId(roomId);
     }
     setStarted(true);
-  }, [isConnected, roomId, userName]);
+  }, [isConnected, roomId, userName, getValidIgnoredRooms]);
 
   const handleJoinRoom = useCallback(
     (data: {
@@ -149,6 +180,7 @@ function App() {
   // Triggered when WE leave the room
   const cleanupMedia = useCallback(() => {
     // Reset Senders but KEEP tracks alive in localStreamRef
+    isMakingOffer.current = false;
     videoSenderRef.current = null;
     audioSenderRef.current = null;
 
@@ -172,13 +204,17 @@ function App() {
     });
 
     if (localStorage.getItem("randomatch")) {
-      setStarted(false);
-      setRoomId(null);
+      console.log("Leaving Room:", started);
       localStorage.removeItem("randomatch");
+      setRoomId(null);
     }
 
+    setStarted(false);
+
+    addToIgnoreList(roomId);
+
     cleanupMedia();
-  }, [roomId, cleanupMedia]);
+  }, [addToIgnoreList, roomId, cleanupMedia, started]);
 
   const joinNextRoom = useCallback(() => {
     const socket = socketRef.current;
@@ -189,7 +225,8 @@ function App() {
 
     cleanupMedia();
 
-    const newRoomId = crypto.randomUUID();
+    addToIgnoreList(roomId);
+
     socket.emit("room:leave", { roomId, randomMatch: true });
 
     const hasVideo = localStreamRef.current.getVideoTracks().length > 0;
@@ -197,26 +234,22 @@ function App() {
 
     localStorage.setItem("randomatch", "true");
 
-    console.log([
-      ...JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
-      roomId,
-    ]);
-    localStorage.setItem(
-      "ignoreRooms",
-      JSON.stringify([
-        ...JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
-        roomId,
-      ]),
-    );
-
+    const ignoreList = getValidIgnoredRooms();
+    console.log("Ignoring:", ignoreList);
     socket.emit("room:join", {
       roomId: null,
-      ignoreRooms: JSON.parse(localStorage.getItem("ignoreRooms") || "[]"),
+      ignoreRooms: ignoreList,
       user: userName,
       mediaState: { video: hasVideo, audio: hasAudio },
     });
-    setRoomId(newRoomId);
-  }, [isConnected, roomId, userName, cleanupMedia]);
+  }, [
+    isConnected,
+    roomId,
+    userName,
+    cleanupMedia,
+    getValidIgnoredRooms,
+    addToIgnoreList,
+  ]);
 
   // 🔥 CRITICAL FIX: Triggered when THEY leave the room
   const handleUserLeft = useCallback(() => {
@@ -235,9 +268,20 @@ function App() {
 
   const handleCallUser = useCallback(
     async (remoteSocketId: string) => {
-      syncLocalTracks();
-      const offer = await peer.getOffer();
-      socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
+      // 🔥 FIX: Lock negotiation to prevent 'negotiationneeded'
+      // from firing automatically while we build the initial offer.
+      isMakingOffer.current = true;
+
+      try {
+        syncLocalTracks(); // This triggers the event, but we blocked it above.
+        const offer = await peer.getOffer();
+        socketRef.current?.emit("user:call", { to: remoteSocketId, offer });
+      } catch (err) {
+        console.error("Call user failed:", err);
+      } finally {
+        // Release lock so future renegotiations (mute/unmute) work
+        isMakingOffer.current = false;
+      }
     },
     [syncLocalTracks],
   );
@@ -245,9 +289,20 @@ function App() {
   const handleIncommingCall = useCallback(
     async ({ from, offer }: { from: string; offer: RTCSessionDescription }) => {
       setRemoteSocketId(from);
-      syncLocalTracks();
-      const ans = await peer.getAnswer(offer);
-      socketRef.current?.emit("call:accepted", { to: from, ans });
+
+      // 🔥 FIX: Lock here too. We are Answering, so we must not let
+      // the browser trigger a new Offer when we add our tracks.
+      isMakingOffer.current = true;
+
+      try {
+        syncLocalTracks();
+        const ans = await peer.getAnswer(offer);
+        socketRef.current?.emit("call:accepted", { to: from, ans });
+      } catch (err) {
+        console.error("Incoming call failed:", err);
+      } finally {
+        isMakingOffer.current = false;
+      }
     },
     [syncLocalTracks],
   );
@@ -405,18 +460,6 @@ function App() {
   }, [remoteSocketId]);
 
   /* ---------------- Effects ---------------- */
-
-  // ignoreRooms reset useffect
-  useEffect(() => {
-    function resetIgnoreRooms() {
-      localStorage.setItem("ignoreRooms", JSON.stringify([]));
-    }
-    const resetInterval = setInterval(resetIgnoreRooms, 120000);
-
-    return () => {
-      clearInterval(resetInterval);
-    };
-  });
 
   // Re-bind negotiation listener whenever 'started' or peer resets
   useEffect(() => {
